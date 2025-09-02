@@ -191,6 +191,36 @@ body {
 .reader .back-btn { color: var(--accent); text-decoration: none; border: 1px solid var(--panel-border); padding: 8px 12px; border-radius: 6px; font-size: 14px; font-weight: 500; }
 .reader .back-btn:hover { background: var(--panel-border); }
 
+/* Reader toolbar Terminal button (inline, left of path) */
+.reader .toolbar .terminal-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  min-width: 36px;
+  padding: 0 8px;
+  margin-right: 8px;
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 1;
+  background: color-mix(in srgb, var(--panel) 80%, transparent 20%);
+  border: 1px solid color-mix(in srgb, var(--panel-border) 60%, transparent 40%);
+  color: #2563eb; /* 亮色主题蓝 */
+}
+.mode-dark .reader .toolbar .terminal-btn {
+  color: #3b82f6; /* 暗色主题蓝 */
+}
+.reader .toolbar .terminal-btn .btn-underscore {
+  display: inline-block;
+  width: 0.6em;
+  height: 0.14em;
+  margin-left: 0.06em;
+  border-radius: 2px;
+  background: currentColor;
+  vertical-align: baseline;
+  transform: translateY(0.28em);
+}
+
 /* Basic markdown defaults (only when NOT using GitHub markdown body) */
 .reader-content:not(.markdown-body) { color: var(--fg); }
 .reader-content:not(.markdown-body) h1,
@@ -202,8 +232,9 @@ body {
 /* Header button template (single source of truth) */
 .header-btn {
   position: fixed;
-  top: 12px;
-  right: 16px;
+  top: calc(env(safe-area-inset-top, 0px) + 12px);
+  right: calc(env(safe-area-inset-right, 0px) + 16px);
+  left: auto; /* 避免任何 left 定位干扰，统一固定在右上角 */
   z-index: 10;
   /* Fallback for browsers without color-mix */
   background: var(--panel);
@@ -335,9 +366,16 @@ body {
   
   .reader .toolbar {
   padding: 12px 12px 14px; /* 上方更紧凑，整体上移 */
-  margin-bottom: 16px; /* 衬线与正文更舒适的间距 */
+  margin-bottom: 12px; /* 更紧凑的衬线与正文间距 */
+  border-bottom-color: color-mix(in srgb, var(--panel-border) 60%, transparent 40%); /* 更轻的分隔线颜色 */
     gap: 8px;
+    min-height: 40px;
   }
+  .reader .markdown-body h1 { font-size: 1.75em; margin-top: 16px; margin-bottom: 12px; }
+  .reader .markdown-body h2 { font-size: 1.35em; margin-top: 18px; margin-bottom: 12px; }
+  .reader .markdown-body h3 { font-size: 1.15em; margin-top: 12px; margin-bottom: 10px; }
+  .reader .markdown-body { padding: 20px 18px 40px; margin: 8px auto; }
+  
   
   .reader .back-btn {
     padding: 6px 10px;
@@ -345,12 +383,16 @@ body {
   }
   
   .header-btn {
-    top: 8px;
-    right: 12px;
+    top: calc(env(safe-area-inset-top, 0px) + 8px);
+    right: calc(env(safe-area-inset-right, 0px) + 12px);
+    left: auto;
     width: 44px;
     height: 36px;
     font-size: 14px;
   }
+
+  /* 移动端：进一步收紧首元素与分隔线的距离 */
+  .reader .reader-content.markdown-body > *:first-child { margin-top: 4px !important; }
 }
 
 /* 超小屏幕适配 */
@@ -397,19 +439,27 @@ body {
   
   .reader .toolbar {
   padding: 12px 8px 12px; /* 上方更紧凑，整体上移 */
-  margin-bottom: 14px;
+  margin-bottom: 10px;
+  border-bottom-color: color-mix(in srgb, var(--panel-border) 60%, transparent 40%);
     display: flex;
     align-items: center;
   }
+  .reader .markdown-body h1 { font-size: 1.6em; margin-top: 14px; margin-bottom: 10px; }
+  .reader .markdown-body h2 { font-size: 1.28em; margin-top: 14px; margin-bottom: 10px; }
+  .reader .markdown-body h3 { font-size: 1.1em; margin-top: 10px; margin-bottom: 8px; }
+  .reader .markdown-body { padding: 16px 14px 36px; margin: 6px auto; }
 
   /* 使路径显示在工具栏右侧 */
   .reader #path { margin-left: auto; text-align: right; }
 
   .header-btn {
-    top: 8px;
-    right: 10px;
+    top: calc(env(safe-area-inset-top, 0px) + 8px);
+    right: calc(env(safe-area-inset-right, 0px) + 10px);
+    left: auto;
     width: 36px;
     height: 30px;
     font-size: 13px;
   }
+
+  .reader .reader-content.markdown-body > *:first-child { margin-top: 4px !important; }
 }
