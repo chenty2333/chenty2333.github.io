@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Read — Terminal Notes</title>
+  <link rel="stylesheet" href="./style.css" />
+  <link rel="stylesheet" href="./parser/markdown.css" />
+  <link rel="stylesheet" href="./parser/html.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism.min.css" />
+  </head>
+  <body>
+    <button id="modeToggle" class="mode-toggle" title="切换明暗">🌗</button>
+    <div class="reader">
+  <div class="toolbar">
+        <a id="back" class="back-btn" href="./index.html">>_ Terminal</a>
+        <div id="path" class="muted"></div>
+      </div>
+  <article id="content" class="reader-content markdown-body" data-theme="dark"></article>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-core.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script>
+      (async function () {
+        // Apply same mode as index.html
+        const modeKey = 'tn_mode';
+        const root = document.documentElement;
+        const saved = localStorage.getItem(modeKey) || 'mode-light';
+        const isLight = saved === 'mode-light';
+        
+        root.classList.toggle('mode-light', isLight);
+        root.classList.toggle('mode-dark', !isLight);
+        
+        const contentEl = document.getElementById('content');
+        contentEl?.setAttribute('data-theme', isLight ? 'light' : 'dark');
+        
+        const toggler = document.getElementById('modeToggle');
+        toggler?.addEventListener('click', () => {
+          const newIsLight = !root.classList.contains('mode-light');
+          root.classList.toggle('mode-light', newIsLight);
+          root.classList.toggle('mode-dark', !newIsLight);
+          localStorage.setItem(modeKey, newIsLight ? 'mode-light' : 'mode-dark');
+          contentEl?.setAttribute('data-theme', newIsLight ? 'light' : 'dark');
+        });
+        
+        const params = new URLSearchParams(location.search);
+        const file = params.get('file');
+        const from = params.get('from') || 'notes';
+        
+        if (!file) {
+          contentEl.textContent = '缺少 file 参数';
+          return;
+        }
+        
+        const pathEl = document.getElementById('path');
+        const back = document.getElementById('back');
+        
+        back.href = './index.html?path=' + encodeURIComponent(from);
+        // Display path in ~ format for consistency with terminal
+        const displayPath = file.startsWith('notes/') ? '~' + file.slice(5) : file;
+        pathEl.textContent = displayPath;
+        
+        try {
+          const isMD = /\.md$/i.test(file);
+          const res = await fetch('./' + file);
+          if (!res.ok) throw new Error('无法加载: ' + file);
+          const txt = await res.text();
+          
+          if (isMD) {
+            contentEl.innerHTML = marked.parse(txt, { mangle: false, headerIds: false });
+          } else {
+            contentEl.innerHTML = txt;
+          }
+          
+          if (window.Prism) {
+            Prism.highlightAllUnder(contentEl);
+          }
+        } catch (err) {
+          contentEl.textContent = String(err);
+        }
+      })();
+    </script>
+  </body>
+  </html>

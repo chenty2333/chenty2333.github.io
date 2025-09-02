@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Terminal Notes</title>
+    <meta name="description" content="Terminal-style notes browser on GitHub Pages" />
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+  <button id="modeToggle" class="mode-toggle" title="切换明暗">🌗</button>
+  <div id="app" class="theme-retro mode-dark">
+      <div id="terminal" role="region" aria-label="terminal">
+        <div class="term-header">
+          <div class="dots">
+            <span class="dot red"></span>
+            <span class="dot yellow"></span>
+            <span class="dot green"></span>
+          </div>
+          <div class="title">~/notes — Terminal</div>
+          <div class="spacer"></div>
+        </div>
+    <div id="output" class="output" aria-live="polite"></div>
+      </div>
+      <noscript>
+        请启用 JavaScript 以使用终端式站点。
+      </noscript>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- 加载命令模块 -->
+    <script src="./commands/index.js"></script>
+    <script src="./commands/help.js"></script>
+    <script src="./commands/base.js"></script>
+    <script src="./commands/file.js"></script>
+    <script src="./commands/search.js"></script>
+    <script src="./commands/config.js"></script>
+    <!-- 有趣的命令 -->
+    <script src="./commands/cat.js"></script>
+    <script src="./commands/cowsay.js"></script>
+    <script src="./commands/figlet.js"></script>
+    <script src="./commands/fortune.js"></script>
+    <script src="./commands/date.js"></script>
+    <script src="./commands/whoami.js"></script>
+    <script src="./commands/uname.js"></script>
+    <script src="./commands/wc.js"></script>
+    <!-- 主终端程序 -->
+    <script src="./terminal.js"></script>
+  </body>
+  </html>
