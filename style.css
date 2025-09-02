@@ -1,17 +1,8 @@
-/* 页面过渡效果 - 减少闪烁 */
-html {
-  opacity: 0;
-  transition: opacity 0.3s ease-in-out;
-}
+/* 取消页面级别的隐藏/显示，避免任何闪烁 */
 
-html.loaded {
-  opacity: 1;
-}
+/* 移除页面切换过渡，保持即时切换 */
 
-/* 页面切换时的平滑过渡 */
-body {
-  transition: opacity 0.2s ease-in-out;
-}
+/* 取消离开时过渡（不再使用） */
 
 :root {
   --bg: #0d1116;          /* page background */
@@ -75,13 +66,13 @@ body {
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* 防止移动端双击缩放 */
-  -webkit-touch-callout: none;
-  -webkit-user-select: none;
-  -khtml-user-select: none;
-  -moz-user-select: none;
-  -ms-user-select: none;
-  user-select: none;
+  /* 允许页面任意区域选择与复制（按钮除外） */
+  -webkit-touch-callout: default;
+  -webkit-user-select: text;
+  -khtml-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
 }
 
 #app {
@@ -124,7 +115,6 @@ body {
   border-radius: 50%; 
   background: var(--muted); 
   opacity: .8;
-  transition: opacity 0.2s;
 }
 .term-header .dot.red { background: #ff5f56; }
 .term-header .dot.yellow { background: #ffbd2e; }
@@ -178,7 +168,7 @@ body {
 /* Reader page basics */
 .reader {
   max-width: min(880px, 92vw);
-  margin: 32px auto;
+  margin: 8px auto; /* 上移整体位置 */
   padding: 0 16px 80px;
 }
 .reader .toolbar {
@@ -186,24 +176,20 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 20px 24px 16px;
+  padding: 16px 24px 18px; /* 上方更紧凑，整体上移 */
   border-bottom: 1px solid var(--panel-border);
-  margin-bottom: 16px;
+  margin-bottom: 20px; /* 衬线与正文间距略大于上方，层次更清晰 */
 }
-.reader .back-btn {
-  color: var(--accent);
-  text-decoration: none;
-  border: 1px solid var(--panel-border);
-  padding: 8px 12px;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
-  transition: all 0.2s;
+.reader .toolbar #path { margin-left: auto; text-align: right; }
+/* 缩小正文与分隔线的间距 */
+.reader .reader-content { margin-top: 0; }
+/* Markdown 样式将首元素的上边距清零了，这里为首元素补一点优雅的呼吸感 */
+.reader .reader-content.markdown-body > *:first-child {
+  margin-top: 8px !important;
 }
-.reader .back-btn:hover {
-  background: var(--panel-border);
-  transform: translateY(-1px);
-}
+/* 读者页旧返回按钮样式保留以兼容历史内容中的链接，但当前不再使用 */
+.reader .back-btn { color: var(--accent); text-decoration: none; border: 1px solid var(--panel-border); padding: 8px 12px; border-radius: 6px; font-size: 14px; font-weight: 500; }
+.reader .back-btn:hover { background: var(--panel-border); }
 
 /* Basic markdown defaults (only when NOT using GitHub markdown body) */
 .reader-content:not(.markdown-body) { color: var(--fg); }
@@ -213,30 +199,75 @@ body {
 .reader-content:not(.markdown-body) pre,
 .reader-content:not(.markdown-body) code { color: var(--accent); }
 
-/* Light/Dark toggle button */
-.mode-toggle {
+/* Header button template (single source of truth) */
+.header-btn {
   position: fixed;
   top: 12px;
   right: 16px;
   z-index: 10;
+  /* Fallback for browsers without color-mix */
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  /* Preferred when supported */
   background: color-mix(in srgb, var(--panel) 80%, transparent 20%);
   color: var(--fg);
   border: 1px solid color-mix(in srgb, var(--panel-border) 60%, transparent 40%);
   border-radius: 10px;
-  padding: 8px 12px;
+  /* 固定大小与位置，不随内容变化（略微放大） */
+  width: 48px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   font-size: 16px;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  /* 去除动画过渡 */
   backdrop-filter: blur(12px) saturate(150%);
+  /* Fallback shadow */
+  box-shadow: 
+    0 4px 12px rgba(0, 0, 0, 0.10),
+    0 2px 4px rgba(0, 0, 0, 0.06);
+  /* Preferred when supported */
   box-shadow: 
     0 4px 12px color-mix(in srgb, var(--bg) 80%, transparent 20%), 
     0 2px 4px color-mix(in srgb, var(--bg) 60%, transparent 40%);
+  /* 按钮自身不允许选中，以免误触 */
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
 }
-.mode-toggle:hover {
-  transform: translateY(-2px) scale(1.02);
+.header-btn:hover {
+  /* Fallback hover shadow */
+  box-shadow: 
+    0 8px 24px rgba(0, 0, 0, 0.18),
+    0 4px 8px rgba(0, 0, 0, 0.10);
+  /* Preferred when supported */
   box-shadow: 
     0 8px 24px color-mix(in srgb, var(--bg) 60%, transparent 40%), 
     0 4px 8px color-mix(in srgb, var(--bg) 40%, transparent 60%);
+}
+
+/* 阅读器中的 Terminal 按钮：显示为主题蓝色，并加粗 */
+.header-btn--terminal {
+  color: var(--accent);
+  font-weight: 800; /* 更加粗 */
+}
+
+/* 调整为更深的蓝色调（分别针对亮/暗模式） */
+.mode-light .header-btn--terminal { color: #2563eb; } /* 比 #3b82f6 略深 */
+.mode-dark .header-btn--terminal { color: #3b82f6; } /* 比 #60a5fa 略深 */
+
+/* 自定义“粗下划线”以替代字体 underscore 的粗细受限问题 */
+.header-btn--terminal .btn-underscore {
+  display: inline-block;
+  width: 0.6em;           /* 下划线长度占比 */
+  height: 0.14em;         /* 线条厚度，可再调 */
+  margin-left: 0.06em;
+  border-radius: 2px;
+  background-color: currentColor;
+  vertical-align: baseline;   /* 与文本基线对齐 */
+  transform: translateY(0.28em); /* 向下偏移，贴近基线下方，像真正的下划线 */
 }
 
 /* When using official GitHub markdown CSS (.markdown-body), defer to it fully */
@@ -298,12 +329,13 @@ body {
   
   .reader {
     max-width: 100%;
-    margin: 16px auto;
+  margin: 12px auto; /* 上移整体位置 */
     padding: 0 12px 60px;
   }
   
   .reader .toolbar {
-    padding: 16px 12px 12px;
+  padding: 12px 12px 14px; /* 上方更紧凑，整体上移 */
+  margin-bottom: 16px; /* 衬线与正文更舒适的间距 */
     gap: 8px;
   }
   
@@ -312,10 +344,11 @@ body {
     font-size: 13px;
   }
   
-  .mode-toggle {
+  .header-btn {
     top: 8px;
     right: 12px;
-    padding: 6px 10px;
+    width: 44px;
+    height: 36px;
     font-size: 14px;
   }
 }
@@ -358,11 +391,25 @@ body {
   }
   
   .reader {
-    margin: 12px auto;
+  margin: 8px auto; /* 上移整体位置 */
     padding: 0 8px 50px;
   }
   
   .reader .toolbar {
-    padding: 12px 8px 8px;
+  padding: 12px 8px 12px; /* 上方更紧凑，整体上移 */
+  margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+  }
+
+  /* 使路径显示在工具栏右侧 */
+  .reader #path { margin-left: auto; text-align: right; }
+
+  .header-btn {
+    top: 8px;
+    right: 10px;
+    width: 36px;
+    height: 30px;
+    font-size: 13px;
   }
 }

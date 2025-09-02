@@ -5,7 +5,7 @@
   let cmd = null; // created inline
   let promptEl = null; // created inline
   const app = document.getElementById('app');
-  const modeToggle = document.getElementById('modeToggle');
+  const headerBtn = document.getElementById('header-btn');
 
   // --- Persistent state ---
   const LS_KEYS = {
@@ -101,8 +101,11 @@
       el.classList.toggle('mode-dark', !isLight);
     });
     
-    if (modeToggle) {
-      modeToggle.addEventListener('click', () => {
+    if (headerBtn) {
+      // 主页：按钮显示为 emoji，并承担明暗切换功能
+      headerBtn.textContent = '🌗';
+      headerBtn.title = '切换明暗';
+      headerBtn.addEventListener('click', () => {
         const newIsLight = !root.classList.contains('mode-light');
         [root, app].forEach(el => {
           el.classList.toggle('mode-light', newIsLight);
@@ -192,6 +195,11 @@
     cmd.type = 'text';
     cmd.spellcheck = false;
     cmd.autocomplete = 'off';
+  // Mobile typing optimizations
+  cmd.setAttribute('autocapitalize', 'none');
+  cmd.setAttribute('autocorrect', 'off');
+  cmd.setAttribute('inputmode', 'text');
+  cmd.setAttribute('enterkeyhint', 'send');
     cmd.setAttribute('aria-label', 'command input');
     renderPrompt();
     line.appendChild(promptEl);
