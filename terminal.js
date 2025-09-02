@@ -1,9 +1,5 @@
 /* Terminal-Style Notes Website - core terminal logic */
 (function () {
-  // 版本标识，用于缓存检查
-  const TERMINAL_VERSION = '2.1.0';
-  console.log(`Terminal Notes v${TERMINAL_VERSION} loaded`);
-  
   const $ = (sel) => document.querySelector(sel);
   const output = $('#output');
   let cmd = null; // created inline

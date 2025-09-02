@@ -20,6 +20,31 @@
         root.classList.toggle('mode-dark', !isLight);
       })();
     </script>
+    <!-- 版本控制：修改此版本号可强制刷新所有缓存 -->
+    <script>
+      const CACHE_VERSION = '2.1.2';
+      const scripts = [
+        './commands/index.js',
+        './commands/help.js',
+        './commands/base.js',
+        './commands/file.js',
+        './commands/search.js',
+        './commands/config.js',
+        './commands/cat.js',
+        './commands/cowsay.js',
+        './commands/figlet.js',
+        './commands/fortune.js',
+        './commands/date.js',
+        './commands/whoami.js',
+        './commands/uname.js',
+        './commands/wc.js',
+        './terminal.js'
+      ];
+      
+      scripts.forEach(src => {
+        document.write(`<script src="${src}?v=${CACHE_VERSION}"><\/script>`);
+      });
+    </script>
   </head>
   <body>
   <button id="modeToggle" class="mode-toggle" title="切换明暗">🌗</button>
@@ -42,24 +67,6 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <!-- 加载命令模块 -->
-    <script src="./commands/index.js"></script>
-    <script src="./commands/help.js"></script>
-    <script src="./commands/base.js"></script>
-    <script src="./commands/file.js"></script>
-    <script src="./commands/search.js"></script>
-    <script src="./commands/config.js"></script>
-    <!-- 有趣的命令 -->
-    <script src="./commands/cat.js"></script>
-    <script src="./commands/cowsay.js"></script>
-    <script src="./commands/figlet.js"></script>
-    <script src="./commands/fortune.js"></script>
-    <script src="./commands/date.js"></script>
-    <script src="./commands/whoami.js"></script>
-    <script src="./commands/uname.js"></script>
-    <script src="./commands/wc.js"></script>
-    <!-- 主终端程序 -->
-    <script src="./terminal.js"></script>
     <!-- 页面加载完成标记 -->
     <script>
       document.addEventListener('DOMContentLoaded', function() {
