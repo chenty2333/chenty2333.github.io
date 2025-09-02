@@ -172,6 +172,13 @@
   window.addEventListener('beforeunload', saveState);
 
   function ensureInputLine() {
+    // 检查是否已经有输入行，避免重复创建
+    const existing = output.querySelector('.input-line');
+    if (existing) {
+      focusInput();
+      return;
+    }
+    
     // Create a new inline input line and attach listeners
     const line = document.createElement('div');
     line.className = 'input-line';
@@ -191,6 +198,7 @@
     output.appendChild(line);
     output.scrollTop = output.scrollHeight;
     hookInputEvents();
+    focusInput();
   }
 
   function isDir(node) { return node && typeof node === 'object' && !node.type; }
@@ -308,8 +316,23 @@
       if (last && last.classList.contains('input-line')) last.remove();
       output.appendChild(echo);
       output.scrollTop = output.scrollHeight;
-      handleLine(text);
-      // 注意：不在这里调用 ensureInputLine，由 handleLine 处理
+      
+      // 处理命令
+      if (text) {
+        const commandCompleted = handleLine(text);
+        // 如果命令返回 Promise，等待完成后再创建输入行
+        if (commandCompleted && typeof commandCompleted.then === 'function') {
+          commandCompleted.finally(() => {
+            setTimeout(() => ensureInputLine(), 10);
+          });
+        } else {
+          // 同步命令立即创建输入行
+          ensureInputLine();
+        }
+      } else {
+        // 空命令直接创建输入行
+        ensureInputLine();
+      }
     } else if (e.key === 'ArrowUp') {
       if (history.length) {
         histIdx = Math.max(0, histIdx === -1 ? history.length - 1 : histIdx - 1);
@@ -355,7 +378,6 @@
     if (!text) return;
     history.push(text);
     histIdx = -1;
-  // echo already printed above
 
     // alias expansion (first token)
     const tokens = tokenize(text);
@@ -368,7 +390,10 @@
     // Get commands from modular system
     const commands = getCommands();
     const handler = commands[cmdName];
-    if (!handler) return println(`未找到命令: ${cmdName}`);
+    if (!handler) {
+      println(`未找到命令: ${cmdName}`);
+      return; // 同步返回
+    }
     
     try {
       // Create context object with all necessary functions and data
@@ -408,46 +433,24 @@
         unquote,
         parseMaybeNumber,
         
-        // Command completion callback
-        onCommandComplete: () => {
-          // 确保命令执行完后有输入行
-          setTimeout(() => {
-            ensureInputLine();
-            focusInput();
-          }, 10);
-        }
+        // Command completion callback (不再使用)
+        onCommandComplete: () => {}
       };
       
       const result = handler.run(args, context);
       
-      // 处理异步命令
+      // 返回执行结果（可能是 Promise）
       if (result && typeof result.then === 'function') {
-        result.then(() => {
-          setTimeout(() => {
-            ensureInputLine();
-            focusInput();
-          }, 10);
-        }).catch((err) => {
+        return result.catch((err) => {
           println('执行错误: ' + (err?.message || String(err)));
-          setTimeout(() => {
-            ensureInputLine();
-            focusInput();
-          }, 10);
         });
-      } else {
-        // 同步命令立即创建新输入行
-        setTimeout(() => {
-          ensureInputLine();
-          focusInput();
-        }, 10);
       }
+      
+      return result; // 同步命令结果
     } catch (err) {
       println('执行错误: ' + (err?.message || String(err)));
       console.error(err);
-      setTimeout(() => {
-        ensureInputLine();
-        focusInput();
-      }, 10);
+      return; // 同步返回
     }
   }
 
