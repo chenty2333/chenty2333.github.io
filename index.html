@@ -23,27 +23,6 @@
     <!-- 版本控制：修改此版本号可强制刷新所有缓存 -->
     <script>
       const CACHE_VERSION = '2.1.2';
-      const scripts = [
-        './commands/index.js',
-        './commands/help.js',
-        './commands/base.js',
-        './commands/file.js',
-        './commands/search.js',
-        './commands/config.js',
-        './commands/cat.js',
-        './commands/cowsay.js',
-        './commands/figlet.js',
-        './commands/fortune.js',
-        './commands/date.js',
-        './commands/whoami.js',
-        './commands/uname.js',
-        './commands/wc.js',
-        './terminal.js'
-      ];
-      
-      scripts.forEach(src => {
-        document.write(`<script src="${src}?v=${CACHE_VERSION}"><\/script>`);
-      });
     </script>
   </head>
   <body>
@@ -67,6 +46,30 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- 动态加载所有命令模块和主程序，使用版本号防止缓存 -->
+    <script>
+      const scripts = [
+        './commands/index.js',
+        './commands/help.js',
+        './commands/base.js',
+        './commands/file.js',
+        './commands/search.js',
+        './commands/config.js',
+        './commands/cat.js',
+        './commands/cowsay.js',
+        './commands/figlet.js',
+        './commands/fortune.js',
+        './commands/date.js',
+        './commands/whoami.js',
+        './commands/uname.js',
+        './commands/wc.js',
+        './terminal.js'
+      ];
+      
+      scripts.forEach(src => {
+        document.write(`<script src="${src}?v=${CACHE_VERSION}"><\/script>`);
+      });
+    </script>
     <!-- 页面加载完成标记 -->
     <script>
       document.addEventListener('DOMContentLoaded', function() {
