@@ -61,7 +61,11 @@
         if (isNew) {
           window.open(url, '_blank');
         } else {
-          location.href = url;
+          // 添加淡出效果
+          document.body.style.opacity = '0';
+          setTimeout(() => {
+            location.href = url;
+          }, 200); // 与 CSS 过渡时间匹配
         }
       },
     },

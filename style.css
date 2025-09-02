@@ -1,3 +1,18 @@
+/* 页面过渡效果 - 减少闪烁 */
+html {
+  opacity: 0;
+  transition: opacity 0.3s ease-in-out;
+}
+
+html.loaded {
+  opacity: 1;
+}
+
+/* 页面切换时的平滑过渡 */
+body {
+  transition: opacity 0.2s ease-in-out;
+}
+
 :root {
   --bg: #0d1116;          /* page background */
   --fg: #cde7d3;          /* primary text on dark */

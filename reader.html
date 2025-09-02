@@ -4,6 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Read — Terminal Notes</title>
+    <!-- 防止页面闪烁 -->
+    <script>
+      (function() {
+        const saved = localStorage.getItem('tn_mode') || 'mode-light';
+        const isLight = saved === 'mode-light';
+        const root = document.documentElement;
+        root.classList.toggle('mode-light', isLight);
+        root.classList.toggle('mode-dark', !isLight);
+      })();
+    </script>
   <link rel="stylesheet" href="./style.css" />
   <link rel="stylesheet" href="./parser/markdown.css" />
   <link rel="stylesheet" href="./parser/html.css" />
@@ -58,6 +68,16 @@
         const back = document.getElementById('back');
         
         back.href = './index.html?path=' + encodeURIComponent(from);
+        
+        // 为返回按钮添加平滑过渡效果
+        back.addEventListener('click', function(e) {
+          e.preventDefault();
+          document.body.style.opacity = '0';
+          setTimeout(() => {
+            location.href = this.href;
+          }, 200);
+        });
+        
         // Display path in ~ format for consistency with terminal
         const displayPath = file.startsWith('notes/') ? '~' + file.slice(5) : file;
         pathEl.textContent = displayPath;
@@ -81,6 +101,12 @@
           contentEl.textContent = String(err);
         }
       })();
+    </script>
+    <!-- 页面加载完成标记 -->
+    <script>
+      document.addEventListener('DOMContentLoaded', function() {
+        document.documentElement.classList.add('loaded');
+      });
     </script>
   </body>
   </html>

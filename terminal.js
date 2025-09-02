@@ -1,5 +1,9 @@
 /* Terminal-Style Notes Website - core terminal logic */
 (function () {
+  // 版本标识，用于缓存检查
+  const TERMINAL_VERSION = '2.1.0';
+  console.log(`Terminal Notes v${TERMINAL_VERSION} loaded`);
+  
   const $ = (sel) => document.querySelector(sel);
   const output = $('#output');
   let cmd = null; // created inline
@@ -94,7 +98,8 @@
     const saved = localStorage.getItem(LS_KEYS.mode) || 'mode-light';
     const isLight = saved === 'mode-light';
     
-    // Apply mode to both root and app elements
+    // 确保 app 元素和根元素都有正确的模式类
+    // (根元素应该已经由内联脚本设置，这里是确保同步)
     [root, app].forEach(el => {
       el.classList.toggle('mode-light', isLight);
       el.classList.toggle('mode-dark', !isLight);

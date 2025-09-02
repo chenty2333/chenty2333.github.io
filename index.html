@@ -3,14 +3,27 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>Terminal Notes</title>
     <meta name="description" content="Terminal-style notes browser on GitHub Pages" />
     <link rel="preconnect" href="https://cdn.jsdelivr.net" />
     <link rel="stylesheet" href="./style.css" />
+    <!-- 防止模式闪烁：在页面渲染前设置正确的模式 -->
+    <script>
+      (function() {
+        const saved = localStorage.getItem('tn_mode') || 'mode-light';
+        const isLight = saved === 'mode-light';
+        const root = document.documentElement;
+        root.classList.toggle('mode-light', isLight);
+        root.classList.toggle('mode-dark', !isLight);
+      })();
+    </script>
   </head>
   <body>
   <button id="modeToggle" class="mode-toggle" title="切换明暗">🌗</button>
-  <div id="app" class="theme-retro mode-dark">
+  <div id="app" class="theme-retro">
       <div id="terminal" role="region" aria-label="terminal">
         <div class="term-header">
           <div class="dots">
@@ -47,5 +60,11 @@
     <script src="./commands/wc.js"></script>
     <!-- 主终端程序 -->
     <script src="./terminal.js"></script>
+    <!-- 页面加载完成标记 -->
+    <script>
+      document.addEventListener('DOMContentLoaded', function() {
+        document.documentElement.classList.add('loaded');
+      });
+    </script>
   </body>
   </html>
