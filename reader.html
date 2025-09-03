@@ -2,7 +2,7 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Read — Terminal Notes</title>
     <!-- 防止页面闪烁 -->
     <script>
@@ -14,16 +14,21 @@
         root.classList.toggle('mode-dark', !isLight);
       })();
     </script>
-  <link rel="stylesheet" href="./style.css" />
-  <link rel="stylesheet" href="./parser/markdown.css" />
-  <link rel="stylesheet" href="./parser/html.css" />
+    <!-- 版本控制：修改此版本号可强制刷新所有缓存 -->
+    <script>
+      const CACHE_VERSION = '3.1.0';
+    </script>
+    <script>
+      document.write(`<link rel="stylesheet" href="./style.css?v=${CACHE_VERSION}" />`);
+      document.write(`<link rel="stylesheet" href="./parser/markdown.css?v=${CACHE_VERSION}" />`);
+      document.write(`<link rel="stylesheet" href="./parser/html.css?v=${CACHE_VERSION}" />`);
+    </script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism.min.css" />
   </head>
   <body>
-  <button id="header-btn" class="header-btn" title="切换明暗" aria-label="toggle theme">🌗</button>
+  <button id="header-btn" class="header-btn header-btn--terminal" title=">_ Terminal" aria-label=">_ Terminal">&gt;<span class="btn-underscore" aria-hidden="true"></span></button>
     <div class="reader">
   <div class="toolbar">
-        <button id="terminal-btn" class="terminal-btn" title=">_ Terminal" aria-label=">_ Terminal"></button>
         <div id="path" class="muted"></div>
       </div>
   <article id="content" class="reader-content markdown-body" data-theme="dark"></article>
@@ -37,55 +42,35 @@
         // Apply same mode as index.html
         const modeKey = 'tn_mode';
         const root = document.documentElement;
-        const saved = localStorage.getItem(modeKey) || 'mode-light';
-        const isLight = saved === 'mode-light';
+        let saved = localStorage.getItem(modeKey) || 'mode-light';
+        let isLight = saved === 'mode-light';
         
         root.classList.toggle('mode-light', isLight);
         root.classList.toggle('mode-dark', !isLight);
-        
-        const contentEl = document.getElementById('content');
-        contentEl?.setAttribute('data-theme', isLight ? 'light' : 'dark');
-        
-        const headerBtn = document.getElementById('header-btn');
-        // 阅读器：浮动按钮与首页一致，用于明暗切换
-        if (headerBtn) {
-          headerBtn.textContent = '🌗';
-          headerBtn.title = '切换明暗';
-          headerBtn.onclick = (e) => {
-            e.preventDefault();
-            const newIsLight = !root.classList.contains('mode-light');
-            document.querySelectorAll('html, body, #app').forEach(el => {
-              el.classList.toggle('mode-light', newIsLight);
-              el.classList.toggle('mode-dark', !newIsLight);
-            });
-            localStorage.setItem(modeKey, newIsLight ? 'mode-light' : 'mode-dark');
-            contentEl?.setAttribute('data-theme', newIsLight ? 'light' : 'dark');
-          };
-        }
 
-        // 工具栏中的 Terminal 返回按钮
-        const terminalBtn = document.getElementById('terminal-btn');
-        if (terminalBtn) {
-          terminalBtn.innerHTML = '&gt;<span class="btn-underscore" aria-hidden="true"></span>';
-        }
-        
   const params = new URLSearchParams(location.search);
   const file = params.get('file');
   const from = params.get('from') || 'notes';
         
-        if (!file) {
+        const contentEl = document.getElementById('content');
+        contentEl?.setAttribute('data-theme', isLight ? 'light' : 'dark');
+
+        // Header button: always Terminal (>_) across devices
+        const headerBtn = document.getElementById('header-btn');
+        if (headerBtn) {
+          headerBtn.onclick = (e) => {
+            e.preventDefault();
+            location.href = './index.html?path=' + encodeURIComponent(from);
+          };
+        }
+        
+  if (!file) {
           contentEl.textContent = '缺少 file 参数';
           return;
         }
         
         const pathEl = document.getElementById('path');
   // 使用统一的 header 按钮进行返回动作，已在上方绑定
-        if (terminalBtn) {
-          terminalBtn.onclick = (e) => {
-            e.preventDefault();
-            location.href = './index.html?path=' + encodeURIComponent(from);
-          };
-        }
         
         // Display path in ~ format for consistency with terminal
         const displayPath = file.startsWith('notes/') ? '~' + file.slice(5) : file;
