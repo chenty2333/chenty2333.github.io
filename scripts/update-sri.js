@@ -2,9 +2,10 @@
 /**
  * update-sri.js
  *
- * Usage: node update-sri.js [--files <file1,file2,...>] [--dry-run]
+ * Usage: node update-sri.js [--files <file1,file2,...>] [--dry-run] [--check]
  * Scans provided HTML files (default: index.html, reader.html) for external script/link
  * resources, fetches them, computes sha384 SRI, and inserts/updates integrity + crossorigin="anonymous".
+ * By default skips git cleanliness check; use --check to enable it.
  */
 
 const fs = require('fs');
@@ -14,19 +15,19 @@ const https = require('https');
 const http = require('http');
 
 function usage() {
-  console.log('Usage: node scripts/update-sri.js [--files file1,file2] [--dry-run] [--no-check]');
+  console.log('Usage: node scripts/update-sri.js [--files file1,file2] [--dry-run] [--check]');
   process.exit(1);
 }
 
 const argv = process.argv.slice(2);
 let filesArg = null;
 let dryRun = false;
-let noCheck = false; // --no-check to skip git cleanliness check
+let noCheck = true; // default to skip git cleanliness check; use --check to enable
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === '--files' && argv[i+1]) { filesArg = argv[++i]; }
   else if (a === '--dry-run') { dryRun = true; }
-  else if (a === '--no-check') { noCheck = true; }
+  else if (a === '--check') { noCheck = false; } // --check to enable git check
   else if (a === '--help' || a === '-h') usage();
 }
 
@@ -151,7 +152,7 @@ async function processFile(filePath) {
     return;
   }
 
-  // By default require git working tree to be clean before modifying files; use --no-check to skip
+  // By default skip git working tree check; use --check to enable
   if (!noCheck) {
     try {
       const { execSync } = require('child_process');
@@ -159,11 +160,11 @@ async function processFile(filePath) {
       execSync('git rev-parse --is-inside-work-tree', { cwd: path.dirname(filePath), stdio: 'ignore' });
       const status = execSync('git status --porcelain', { cwd: path.dirname(filePath) }).toString().trim();
       if (status) {
-        console.error('Aborting: git working tree is not clean. Please commit or stash changes before running the script, or re-run with --no-check to override.');
+        console.error('Aborting: git working tree is not clean. Please commit or stash changes before running the script, or re-run without --check to skip.');
         process.exit(2);
       }
     } catch (err) {
-      console.error('Aborting: git check failed or git not available. Please ensure you run this in a git repo or re-run with --no-check.');
+      console.error('Aborting: git check failed or git not available. Please ensure you run this in a git repo or re-run without --check.');
       process.exit(2);
     }
   }
