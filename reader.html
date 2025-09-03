@@ -16,14 +16,21 @@
     </script>
     <!-- 版本控制：修改此版本号可强制刷新所有缓存 -->
     <script>
-      const CACHE_VERSION = '3.1.0';
+      const CACHE_VERSION = '3.1.2';
     </script>
+    <script src="./scripts/loader.js?v=${CACHE_VERSION}"></script>
     <script>
-      document.write(`<link rel="stylesheet" href="./style.css?v=${CACHE_VERSION}" />`);
-      document.write(`<link rel="stylesheet" href="./parser/markdown.css?v=${CACHE_VERSION}" />`);
-      document.write(`<link rel="stylesheet" href="./parser/html.css?v=${CACHE_VERSION}" />`);
+      // Load stylesheets using shared loader
+      (function() {
+        if (!window.loadCss) return console.error('loader not available');
+        Promise.all([
+          window.loadCss(`./style.css?v=${CACHE_VERSION}`),
+          window.loadCss(`./parser/markdown.css?v=${CACHE_VERSION}`),
+          window.loadCss(`./parser/html.css?v=${CACHE_VERSION}`)
+        ]).catch(err => console.error('CSS load error:', err));
+      })();
     </script>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism.min.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.30.0/themes/prism.min.css" />
   </head>
   <body>
   <button id="header-btn" class="header-btn header-btn--terminal" title=">_ Terminal" aria-label=">_ Terminal">&gt;<span class="btn-underscore" aria-hidden="true"></span></button>
@@ -34,9 +41,10 @@
   <article id="content" class="reader-content markdown-body" data-theme="dark"></article>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-core.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@16.2.1/lib/marked.umd.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.30.0/components/prism-core.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.30.0/plugins/autoloader/prism-autoloader.min.js"></script>
     <script>
       (async function () {
         // Apply same mode as index.html
@@ -83,9 +91,18 @@
           const txt = await res.text();
           
           if (isMD) {
-            contentEl.innerHTML = marked.parse(txt, { mangle: false, headerIds: false });
+            const raw = marked.parse(txt, { mangle: false, headerIds: false });
+            if (window.DOMPurify) {
+              contentEl.innerHTML = DOMPurify.sanitize(raw);
+            } else {
+              contentEl.innerHTML = raw;
+            }
           } else {
-            contentEl.innerHTML = txt;
+            if (window.DOMPurify) {
+              contentEl.innerHTML = DOMPurify.sanitize(txt);
+            } else {
+              contentEl.innerHTML = txt;
+            }
           }
           
           if (window.Prism) {

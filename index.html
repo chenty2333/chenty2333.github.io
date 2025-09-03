@@ -22,7 +22,7 @@
     </script>
     <!-- 版本控制：修改此版本号可强制刷新所有缓存 -->
     <script>
-      const CACHE_VERSION = '3.1.0';
+      const CACHE_VERSION = '3.1.2';
     </script>
   </head>
   <body>
@@ -45,7 +45,9 @@
       </noscript>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@16.2.1/lib/marked.umd.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
+  <script src="./scripts/loader.js?v=${CACHE_VERSION}"></script>
     <!-- 动态加载所有命令模块和主程序，使用版本号防止缓存 -->
     <script>
       const scripts = [
@@ -65,10 +67,16 @@
         './commands/wc.js',
         './terminal.js'
       ];
-      
-      scripts.forEach(src => {
-        document.write(`<script src="${src}?v=${CACHE_VERSION}"><\/script>`);
-      });
+
+      // Load scripts sequentially using shared loader
+      (function() {
+        if (!window.loadScript) {
+          console.error('loader not available');
+          return;
+        }
+        scripts.reduce((p, src) => p.then(() => window.loadScript({ src: `${src}?v=${CACHE_VERSION}` })), Promise.resolve())
+          .catch((err) => console.error('Script load error:', err));
+      })();
     </script>
     <!-- 页面加载完成标记 -->
     <script>

@@ -134,7 +134,13 @@
   function printHTML(html) {
     const div = document.createElement('div');
     div.className = 'line';
-    div.innerHTML = html;
+    // Attempt to sanitize if DOMPurify is available; otherwise fall back to textContent to avoid XSS
+    if (window.DOMPurify) {
+      div.innerHTML = DOMPurify.sanitize(html);
+    } else {
+      // no sanitizer available: render as plain text to avoid XSS
+      div.textContent = html;
+    }
     output.appendChild(div);
     output.scrollTop = output.scrollHeight;
     trimOutput();
@@ -150,9 +156,10 @@
   // Save/restore session state (output lines + history)
   function saveState() {
     try {
+      // Save only plain text contents of each visible line to avoid persisting raw HTML
       const lines = Array.from(output.children)
         .filter((el) => el.classList.contains('line'))
-        .map((el) => el.innerHTML);
+        .map((el) => ({ text: el.textContent || '', cls: el.className || '' }));
       sessionStorage.setItem(SS_KEYS.out, JSON.stringify(lines));
       sessionStorage.setItem(SS_KEYS.hist, JSON.stringify(history));
     } catch {}
@@ -162,10 +169,11 @@
       const savedOut = JSON.parse(sessionStorage.getItem(SS_KEYS.out) || '[]');
       const savedHist = JSON.parse(sessionStorage.getItem(SS_KEYS.hist) || '[]');
       if (Array.isArray(savedOut) && savedOut.length) {
-        for (const html of savedOut) {
+        for (const item of savedOut) {
           const div = document.createElement('div');
-          div.className = 'line';
-          div.innerHTML = html;
+          div.className = item.cls || 'line';
+          // Restore as textContent to avoid executing any HTML/script that may have been stored
+          div.textContent = item.text || '';
           output.appendChild(div);
         }
         output.scrollTop = output.scrollHeight;
