@@ -9,7 +9,19 @@ class YaExplorer {
         this.currentPath = 'notes';
         this.selectedIndex = 0;
         this.focusedPanel = 'center'; // left, center, right
-    this.modeKey = 'ya_mode';
+        this.modeKey = 'ya_mode';
+        
+        // 搜索相关属性
+        this.searchQuery = '';
+        this.searchActive = false;
+        this.searchTimeout = null;
+        
+        // 性能监控
+        this.performanceMonitor = {
+            renderCount: 0,
+            lastRenderTime: 0,
+            totalRenderTime: 0
+        };
         
         // 面板状态
         this.panels = {
@@ -31,27 +43,24 @@ class YaExplorer {
             this.focusCenter();
             this.applyModeToPreview();
         } catch (error) {
-            // 在开发模式下输出初始化错误
-            if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                console.error('Failed to initialize ya explorer:', error);
-            }
-            this.showError('初始化失败: ' + error.message);
+            // 统一错误处理
+            this.handleError('初始化失败', error);
             
-            // Also display error in the center panel for debugging
+            // 显示错误信息给用户
             const centerList = document.getElementById('centerList');
             if (centerList) {
                 centerList.innerHTML = `
                     <div style="padding: 20px; color: #ff6b6b; text-align: center;">
                         <h3>初始化错误</h3>
                         <p>${error.message}</p>
-                        <p><small>请检查浏览器控制台获取详细信息</small></p>
+                        <p><small>请刷新页面重试</small></p>
                     </div>
                 `;
             }
         }
     }
     
-    // 加载文件系统数据 - 复用原项目的 fs.json
+    // 加载文件系统数据 - 改进错误处理
     async loadFileSystem() {
         try {
             const response = await fetch('../data/fs.json');
@@ -61,62 +70,81 @@ class YaExplorer {
             }
             
             this.fsData = await response.json();
-        } catch (error) {
-            // 在开发模式下输出文件系统加载错误
-            if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                console.error('Failed to load file system:', error);
+            
+            // 验证数据结构
+            if (!this.fsData || typeof this.fsData !== 'object') {
+                throw new Error('文件系统数据格式无效');
             }
-            throw error;
+            
+        } catch (error) {
+            // 统一错误处理
+            this.handleError('文件系统加载失败', error);
+            throw error; // 重新抛出以阻止应用初始化
         }
     }
     
     // 解析URL参数，支持从终端传递初始路径
     parseUrlParams() {
-        const params = new URLSearchParams(window.location.search);
-        const path = params.get('path');
-        // 在开发模式下输出URL参数信息
-        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-            console.log('URL path parameter:', path);
-        }
-        if (path && this.pathExists(path)) {
-            this.currentPath = this.normalizePath(path);
-            this.panels.center.path = this.currentPath;
-            // 在开发模式下输出路径设置信息
+        try {
+            const params = new URLSearchParams(window.location.search);
+            const path = params.get('path');
+            
             if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                console.log('Set current path to:', this.currentPath);
+                console.log('URL path parameter:', path);
             }
-        } else {
-            // 在开发模式下输出默认路径信息
-            if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                console.log('Using default path: notes');
+            
+            if (path && this.pathExists(path)) {
+                this.currentPath = this.normalizePath(path);
+                this.panels.center.path = this.currentPath;
+                
+                if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                    console.log('Set current path to:', this.currentPath);
+                }
+            } else {
+                if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                    console.log('Using default path: notes');
+                }
             }
+        } catch (error) {
+            this.handleError('URL参数解析失败', error);
         }
     }
     
-    // 路径处理工具函数 - 复用原项目逻辑
+    // 路径处理工具函数 - 修复版本
     normalizePath(pathStr) {
-        if (!pathStr) return this.currentPath;
+        if (!pathStr) return this.currentPath || 'notes';
         let p = pathStr.trim();
-        
-        // ~ 映射到 ROOT
+
+        // ~ 映射到 notes 根目录
         if (p.startsWith('~')) {
             p = 'notes' + p.slice(1);
         }
-        
-        // 相对路径处理
-        if (!p.startsWith('/') && !p.startsWith('notes')) {
-            p = this.currentPath + '/' + p;
+
+        // 处理绝对路径（以 / 开头）
+        if (p.startsWith('/')) {
+            p = p.replace(/^\/+/, ''); // 移除开头的斜杠
+        } else if (!p.startsWith('notes')) {
+            // 非以 notes 开头的视为相对路径
+            if (this.currentPath) {
+                p = this.currentPath + '/' + p;
+            } else {
+                p = 'notes/' + p;
+            }
         }
-        
-        // 标准化路径
-        const segs = [];
-        for (const part of p.split('/')) {
-            if (!part || part === '.') continue;
-            if (part === '..') segs.pop();
-            else segs.push(part);
+
+        // 标准化路径（处理 . 和 ..）
+        const parts = p.split('/').filter(part => part && part !== '.');
+        const normalized = [];
+
+        for (const part of parts) {
+            if (part === '..') {
+                normalized.pop();
+            } else {
+                normalized.push(part);
+            }
         }
-        
-        return segs.join('/') || 'notes';
+
+        return normalized.join('/') || 'notes';
     }
     
     // 获取节点 - 复用原项目逻辑
@@ -282,6 +310,7 @@ class YaExplorer {
                 this.panels.right.content = '预览失败: ' + error.message;
                 this.panels.right.type = 'error';
                 this.renderRightPanel(); // 立即渲染错误
+                this.handleError('文件预览失败', error);
             }
         }
     }
@@ -349,9 +378,8 @@ class YaExplorer {
             return content;
             
         } catch (error) {
-            if (error.name === 'AbortError') {
-                throw new Error('文件加载超时');
-            }
+            // 统一错误处理
+            this.handleError('文件加载失败', error, true);
             throw new Error(`加载失败: ${error.message}`);
         } finally {
             clearTimeout(timeoutId);
@@ -418,7 +446,7 @@ class YaExplorer {
         if (window.hotkeys) {
             this.setupHotkeys();
         } else {
-            this.setupNativeKeyboard();
+            console.warn('hotkeys.js 未加载，键盘快捷键将不可用');
         }
         
         // 鼠标点击事件
@@ -541,75 +569,7 @@ class YaExplorer {
         });
     }
 
-    // 原生键盘事件处理 (作为备用)
-    setupNativeKeyboard() {
-        document.addEventListener('keydown', (e) => {
-            // 如果搜索框获得焦点，只处理特殊键
-            if (e.target.id === 'searchInput') {
-                if (e.key === 'Escape') {
-                    e.preventDefault();
-                    e.target.blur();
-                    this.searchQuery = '';
-                    e.target.value = '';
-                    this.updateCenterPanel();
-                    this.render();
-                } else if (e.key === 'Enter') {
-                    // 进入选择模式，不直接打开
-                    e.preventDefault();
-                    e.target.blur();
-                    this.searchActive = true;
-                    if (this.panels.center.files.length > 0) {
-                        this.panels.center.selectedIndex = 0;
-                        this.updateRightPanel();
-                        this.render();
-                    }
-                }
-                return;
-            }
 
-            e.preventDefault();
-            switch (e.key) {
-                case 'h': case 'ArrowLeft': this.navigateLeft(); break;
-                case 'j': case 'ArrowDown': this.moveDown(); break;
-                case 'k': case 'ArrowUp': this.moveUp(); break;
-                case 'l': case 'ArrowRight': this.navigateRight(); break;
-                case 'Enter': this.openSelected(); break;
-                case 'Backspace':
-                    if (this.searchActive) {
-                        e.preventDefault();
-                        const input = document.getElementById('searchInput');
-                        const q = this.searchQuery || '';
-                        if (q.length > 0) {
-                            const next = q.slice(0, -1);
-                            this.searchQuery = next;
-                            if (input) input.value = next;
-                            this.updateCenterPanel();
-                            this.panels.center.selectedIndex = Math.min(this.panels.center.selectedIndex, Math.max(0, this.panels.center.files.length - 1));
-                            this.updateRightPanel();
-                            this.render();
-                        } else {
-                            this.searchActive = false;
-                            if (input) input.value = '';
-                            this.updateCenterPanel();
-                            this.render();
-                        }
-                    }
-                    break;
-                case 'Escape': this.goBack(); break;
-                case '/': this.focusSearch(); break;
-                case 'g': 
-                    if (this.lastkey === 'g') {
-                        this.goToTop();
-                        this.lastkey = null;
-                    } else {
-                        this.lastkey = 'g';
-                        setTimeout(() => { this.lastkey = null; }, 500);
-                    }
-                    break;
-                case 'G': if (e.shiftKey) { this.goToBottom(); } break;
-            }
-        });
-    }
     
     // 设置鼠标事件
     setupMouseEvents() {
@@ -719,46 +679,58 @@ class YaExplorer {
     moveUp() {
         const panel = this.panels[this.focusedPanel];
         if (panel.files.length > 0) {
+            const oldIndex = panel.selectedIndex;
             panel.selectedIndex = Math.max(0, panel.selectedIndex - 1);
-            // 更新预览 - 支持所有面板
-            this.updateRightPanel();
-            this.render();
+            if (oldIndex !== panel.selectedIndex) {
+                // 更新预览 - 支持所有面板
+                this.updateRightPanel();
+                this.render();
+            }
         }
     }
 
     moveDown() {
         const panel = this.panels[this.focusedPanel];
         if (panel.files.length > 0) {
+            const oldIndex = panel.selectedIndex;
             panel.selectedIndex = Math.min(panel.files.length - 1, panel.selectedIndex + 1);
-            // 更新预览 - 支持所有面板
-            this.updateRightPanel();
-            this.render();
+            if (oldIndex !== panel.selectedIndex) {
+                // 更新预览 - 支持所有面板
+                this.updateRightPanel();
+                this.render();
+            }
         }
     }
     
     goToTop() {
         const panel = this.panels[this.focusedPanel];
-        panel.selectedIndex = 0;
-        // 更新预览 - 支持所有面板
-        this.updateRightPanel();
-        this.render();
+        if (panel.files.length > 0) {
+            const oldIndex = panel.selectedIndex;
+            panel.selectedIndex = 0;
+            if (oldIndex !== panel.selectedIndex) {
+                // 更新预览 - 支持所有面板
+                this.updateRightPanel();
+                this.render();
+            }
+        }
     }
     
     goToBottom() {
         const panel = this.panels[this.focusedPanel];
-        panel.selectedIndex = Math.max(0, panel.files.length - 1);
-        // 更新预览 - 支持所有面板
-        this.updateRightPanel();
-        this.render();
+        if (panel.files.length > 0) {
+            const oldIndex = panel.selectedIndex;
+            panel.selectedIndex = Math.max(0, panel.files.length - 1);
+            if (oldIndex !== panel.selectedIndex) {
+                // 更新预览 - 支持所有面板
+                this.updateRightPanel();
+                this.render();
+            }
+        }
     }
     
     switchPanel() {
-        // 禁用面板切换，永远保持焦点在中间面板
-        // const panels = ['left', 'center', 'right'].filter(p => this.panels[p].files.length > 0);
-        // const currentIndex = panels.indexOf(this.focusedPanel);
-        // const nextIndex = (currentIndex + 1) % panels.length;
-        // this.focusedPanel = panels[nextIndex];
-        // this.render();
+        // 面板切换功能已完全移除，永远保持焦点在中间面板
+        // 所有操作都在中心面板进行
     }
     
     // 打开选中的文件或目录
@@ -803,7 +775,20 @@ class YaExplorer {
         this.render();
     }
     
-    // 显示错误
+    // 统一的错误处理方法
+    handleError(message, error, showToUser = false) {
+        // 在开发模式下输出详细错误信息
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            console.error(message, error);
+        }
+        
+        // 如果需要向用户显示错误
+        if (showToUser) {
+            this.showError(`${message}: ${error.message}`);
+        }
+    }
+    
+    // 显示错误信息给用户
     showError(message) {
         const statusBar = document.getElementById('statusBar');
         if (statusBar) {
@@ -811,37 +796,51 @@ class YaExplorer {
         }
     }
     
-    // 性能监控
-    performanceMonitor = {
-        renderCount: 0,
-        lastRenderTime: 0,
-        totalRenderTime: 0
-    };
+    // 统一的图标渲染方法 - 优化性能
+    renderIcons() {
+        if (window.feather && typeof feather.replace === 'function') {
+            feather.replace({ 'stroke-width': 1.6 });
+        }
+    }
     
-    // 渲染界面
+    // 获取文件图标 - 提取重复逻辑
+    getFileIcon(file) {
+        if (file.name === '..') return 'arrow-up';
+        if (file.isDir) return 'folder';
+        if (file.type === 'md') return 'file-text';
+        if (file.type === 'image') return 'image';
+        if (file.type === 'code') return 'code';
+        return 'file';
+    }
+    
+    // 渲染界面 - 拆分版本
     render() {
         const startTime = performance.now();
         
+        this.renderUI();
+        this.renderIcons();
+        this.logPerformance(startTime);
+    }
+    
+    // 渲染UI组件
+    renderUI() {
         this.renderPath();
         this.renderLeftPanel();
         this.renderCenterPanel();
         this.renderRightPanel();
         this.renderStatus();
-        this.updatePanelFocus(); // 更新面板焦点指示
-        // 全局渲染 Feather 图标，避免遗漏
-        if (window.feather && typeof feather.replace === 'function') {
-            feather.replace({ 'stroke-width': 1.6 });
-        }
-        
+        this.updatePanelFocus();
+    }
+    
+    // 性能日志记录
+    logPerformance(startTime) {
         const endTime = performance.now();
         const renderTime = endTime - startTime;
         
-        // 性能监控
         this.performanceMonitor.renderCount++;
         this.performanceMonitor.totalRenderTime += renderTime;
         this.performanceMonitor.lastRenderTime = renderTime;
         
-        // 在开发模式下输出性能信息
         if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
             console.log(`Render #${this.performanceMonitor.renderCount}: ${renderTime.toFixed(2)}ms`);
         }
@@ -880,7 +879,7 @@ class YaExplorer {
         this.renderFileList('centerList', this.panels.center, 'center');
     }
     
-    // 渲染文件列表
+    // 渲染文件列表 - 优化版本
     renderFileList(elementId, panel, panelName) {
         const container = document.getElementById(elementId);
         if (!container) return;
@@ -905,13 +904,8 @@ class YaExplorer {
                 ? this.formatFileSize(file.size) 
                 : '';
 
-            // 选择合适的图标
-            let icon = 'file';
-            if (file.name === '..') icon = 'arrow-up';
-            else if (file.isDir) icon = 'folder';
-            else if (file.type === 'md') icon = 'file-text';
-            else if (file.type === 'image') icon = 'image';
-            else if (file.type === 'code') icon = 'code';
+            // 使用统一的图标选择方法
+            const icon = this.getFileIcon(file);
             
             return `
                 <div class="${classes}" data-index="${index}" data-path="${file.path}" role="listitem" aria-label="${file.isDir ? '目录' : '文件'}: ${file.name}" tabindex="0">
@@ -923,10 +917,6 @@ class YaExplorer {
         }).join('');
         
         container.innerHTML = html;
-        // 渲染 Feather 图标
-        if (window.feather && typeof feather.replace === 'function') {
-            feather.replace({ 'stroke-width': 1.6 });
-        }
         
         // 滚动到选中项
         if (panel.selectedIndex >= 0) {
@@ -937,7 +927,7 @@ class YaExplorer {
         }
     }
     
-    // 渲染右侧预览面板
+    // 渲染右侧预览面板 - 优化版本
     renderRightPanel() {
         const container = document.getElementById('previewContent');
         if (!container) return;
@@ -981,25 +971,16 @@ class YaExplorer {
                 break;
         }
 
-        // 渲染 Feather 图标（若预览中有目录列表）
-        if (window.feather && typeof feather.replace === 'function') {
-            feather.replace({ 'stroke-width': 1.6 });
-        }
-
-    this.applyModeToPreview();
+        this.applyModeToPreview();
     }
     
-    // 渲染目录预览
+    // 渲染目录预览 - 优化版本
     renderDirectoryPreview(files) {
         if (files.length === 0) return '';
         
         const html = files.slice(0, 20).map(file => {
-            let icon = 'file';
-            if (file.name === '..') icon = 'arrow-up';
-            else if (file.isDir) icon = 'folder';
-            else if (file.type === 'md') icon = 'file-text';
-            else if (file.type === 'image') icon = 'image';
-            else if (file.type === 'code') icon = 'code';
+            // 使用统一的图标选择方法
+            const icon = this.getFileIcon(file);
             return `
             <div class="ya-file ${file.isDir ? 'dir' : 'file'} ${file.type}">
                 <div class="ya-file-icon" data-feather="${icon}"></div>
@@ -1008,10 +989,7 @@ class YaExplorer {
             </div>`;
         }).join('');
         const more = files.length > 20 ? '<div class="ya-file"><span class="ya-file-icon" data-feather="more-horizontal"></span><div class="ya-file-name">... 更多文件</div></div>' : '';
-        const result = html + more;
-        // 渲染图标
-        setTimeout(() => { if (window.feather) feather.replace({ 'stroke-width': 1.6 }); }, 0);
-        return result;
+        return html + more;
     }
     
     // 渲染状态栏
@@ -1079,18 +1057,16 @@ class YaExplorer {
                 
                 const html = marked.parse(processContent, options);
                 const sanitizedHtml = DOMPurify.sanitize(html, {
-                    ALLOWED_TAGS: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'strong', 'em', 'code', 'pre', 'blockquote', 'ul', 'ol', 'li', 'a', 'img'],
-                    ALLOWED_ATTR: ['href', 'src', 'alt', 'title']
+                    ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'code', 'pre', 'blockquote', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
+                    ALLOWED_ATTR: ['href', 'target', 'rel'] // 只允许链接相关属性
                 });
                 
                 container.innerHTML = sanitizedHtml;
                 this.applyModeToPreview();
                 
             } catch (error) {
-                // 在开发模式下输出markdown解析错误
-                if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                    console.error('Markdown parse error:', error);
-                }
+                // 统一错误处理
+                this.handleError('Markdown 渲染失败', error);
                 // 降级到原始文本显示
                 container.innerHTML = `<pre class="markdown-error">${this.escapeHtml(content)}</pre>`;
             }
