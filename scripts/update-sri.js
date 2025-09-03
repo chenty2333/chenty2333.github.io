@@ -31,7 +31,11 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--help' || a === '-h') usage();
 }
 
-const defaultFiles = [path.join(__dirname, '..', 'index.html'), path.join(__dirname, '..', 'reader.html')];
+const defaultFiles = [
+  path.join(__dirname, '..', 'index.html'),
+  path.join(__dirname, '..', 'reader.html'),
+  path.join(__dirname, '..', 'ya', 'ya.html'),
+];
 const targetFiles = filesArg ? filesArg.split(',').map(p => path.resolve(p)) : defaultFiles;
 
 function fetchUrl(url) {
@@ -104,7 +108,7 @@ async function processFile(filePath) {
   let m;
   while ((m = scriptRe.exec(text)) !== null) {
     const url = m[1];
-    if (url.startsWith('http://') || url.startsWith('https://')) resources.push({ type: 'script', url, tag: m[0] });
+    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('//')) resources.push({ type: 'script', url, tag: m[0] });
   }
   while ((m = linkRe.exec(text)) !== null) {
     const url = m[1];
@@ -131,10 +135,21 @@ async function processFile(filePath) {
       // replace tag in out
       const oldTag = res.tag;
       let newTag = oldTag;
-      // update integrity
-      newTag = replaceAttr(newTag, 'integrity', sri);
-      // ensure crossorigin
-      newTag = ensureCrossorigin(newTag);
+      if (res.type === 'script') {
+        // Only modify the opening <script ...> tag, not the closing </script>
+        const openEnd = oldTag.indexOf('>');
+        if (openEnd !== -1) {
+          const opening = oldTag.slice(0, openEnd + 1);
+          const closing = oldTag.slice(openEnd + 1); // includes </script>
+          let updatedOpening = replaceAttr(opening, 'integrity', sri);
+          updatedOpening = ensureCrossorigin(updatedOpening);
+          newTag = updatedOpening + closing;
+        }
+      } else {
+        // link tag (self-contained)
+        newTag = replaceAttr(newTag, 'integrity', sri);
+        newTag = ensureCrossorigin(newTag);
+      }
 
       if (oldTag !== newTag) {
         out = out.split(oldTag).join(newTag);

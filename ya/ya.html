@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="description" content="ya - 现代文件浏览器，支持文件预览和搜索">
+    <link rel="stylesheet" href="./ya.css">
+    <link rel="stylesheet" href="../parser/markdown.css">
+    
+                <!-- 跟随主站主题（tn_mode），无则按系统首开 -->
+                <script>
+                    (function() {
+                        const key = 'tn_mode';
+                        let saved = localStorage.getItem(key);
+                        if (!saved) {
+                            const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                            saved = prefersDark ? 'mode-dark' : 'mode-light';
+                            localStorage.setItem(key, saved);
+                        }
+                        const isLight = saved === 'mode-light';
+                        const root = document.documentElement;
+                        root.classList.toggle('mode-light', isLight);
+                        root.classList.toggle('mode-dark', !isLight);
+                        // 主站切换后跨页面同步
+                        window.addEventListener('storage', (ev) => {
+                            if (ev.key === key && ev.newValue) {
+                                const isL = ev.newValue === 'mode-light';
+                                root.classList.toggle('mode-light', isL);
+                                root.classList.toggle('mode-dark', !isL);
+                            }
+                        });
+                    })();
+                </script>
+    
+    <!-- CDN 库 -->
+    <script src="https://cdn.jsdelivr.net/npm/fuse.js@7.1.0/dist/fuse.min.js" integrity="sha384-P/y/5cwqUn6MDvJ9lCHJSaAi2EoH3JSeEdyaORsQMPgbpvA+NvvUqik7XH2YGBjb" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hotkeys-js@3.13.7/dist/hotkeys.min.js" integrity="sha384-sEDMZQTPyHjKRqJDJ3uRzZ8fKsX7dJvacMzLCEUO9j2JtdeTvCeDoUR181LyDr5O" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js" integrity="sha384-JEyTNhjM6R1ElGoJns4U2Ln4ofPcqzSsynQkmEc/KGy6336qAZl70tDLufbkla+3" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@16.2.1/lib/marked.umd.js" integrity="sha384-9aoLb5ZpEzFGqhQNzuCS8VCCm0y87jTA/8/JYWm+QbEDi4zL0NB9niGI/1CBohEF" crossorigin="anonymous"></script>
+    <!-- Feather Icons -->
+    <script src="https://cdn.jsdelivr.net/npm/feather-icons@4.29.2/dist/feather.min.js" integrity="sha384-qEqAs1VsN9WH2myXDbiP2wGGIttL9bMRZBKCl54ZnzpDlVqbYANP9vMaoT/wvQcf" crossorigin="anonymous"></script>
+</head>
+<body>
+    <div class="ya-container">
+        <!-- 头部工具栏 -->
+        <div class="ya-header">
+            <button class="ya-back-btn" id="backBtn" title="返回终端">Terminal</button>
+            <div class="ya-path" id="pathDisplay">~/</div>
+            <div class="ya-search">
+                <input type="text" id="searchInput" placeholder="搜索文件..." autocomplete="off">
+            </div>
+        </div>
+        
+        <!-- 主要三栏区域 -->
+        <div class="ya-main">
+            <div class="ya-panel ya-left" id="leftPanel" role="region" aria-label="上级目录">
+                <div class="ya-file-list" id="leftList" role="list" aria-label="上级目录文件列表"></div>
+            </div>
+            <div class="ya-panel ya-center" id="centerPanel" role="region" aria-label="当前目录">
+                <div class="ya-file-list" id="centerList" role="list" aria-label="当前目录文件列表"></div>
+            </div>
+            <div class="ya-panel ya-right" id="rightPanel" role="region" aria-label="文件预览">
+                <div class="ya-preview-content" id="previewContent" role="region" aria-label="文件内容预览">选择文件查看预览</div>
+            </div>
+        </div>
+        
+        <!-- 底部状态栏 -->
+        <div class="ya-footer">
+            <div class="ya-status" id="statusBar">
+                <span class="ya-keybind">hjkl:导航 Enter:打开 /:搜索 Esc:返回</span>
+                <span class="ya-info" id="fileInfo"></span>
+            </div>
+        </div>
+    </div>
+    
+    <script src="./ya.js"></script>
+</body>
+</html>

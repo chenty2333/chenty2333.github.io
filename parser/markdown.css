@@ -1226,3 +1226,269 @@
   min-height: 52px;
 }
 
+/* ==========================================================================
+   Reader-specific markdown enhancements (moved from html.css)
+   ========================================================================== */
+
+/* Reader page markdown content styling */
+.reader .markdown-body {
+	/* Typography for reader */
+	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+	font-size: 16px;
+	line-height: 1.6;
+	color: #24292f;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+/* Reader-specific element styling */
+.reader .markdown-body pre {
+	background-color: #f6f8fa;
+	border: 1px solid #eaecef;
+	border-radius: 6px;
+}
+
+.reader .markdown-body h1 {
+	font-size: 2.0em;
+	font-weight: 600;
+	margin-top: 24px;
+	margin-bottom: 16px;
+	padding-bottom: .3em;
+	border-bottom: 1px solid #eaecef;
+}
+
+.reader .markdown-body h2 {
+	font-size: 1.5em;
+	font-weight: 600;
+	margin-top: 24px;
+	margin-bottom: 16px;
+}
+
+.reader .markdown-body h3 {
+	font-size: 1.25em;
+	font-weight: 600;
+	margin-top: 16px;
+	margin-bottom: 16px;
+}
+
+/* Reader inline code styling */
+.reader .markdown-body :not(pre) > code {
+	color: #24292f;
+	background-color: #f6f8fa;
+	border: 1px solid #eaecef;
+	padding: 0.12em 0.4em;
+	border-radius: 4px;
+	font-size: 0.95em;
+}
+
+.reader .markdown-body blockquote {
+	color: #6a737d;
+	background-color: #f6f8fa;
+	border-left: 4px solid #dfe2e5;
+	padding: 8px 16px;
+	margin: 16px 0;
+}
+
+.reader .markdown-body hr {
+	height: auto;
+	padding: 0;
+	background: none;
+	border: 0;
+	border-top: 1px solid #eaecef;
+	margin: 16px 0;
+}
+
+.reader .markdown-body p { margin: 0 0 16px; }
+
+.reader .markdown-body ol {
+	padding-left: 2em;
+	counter-reset: list-counter;
+}
+
+.reader .markdown-body ol > li {
+	counter-increment: list-counter;
+	position: relative;
+	list-style: none;
+}
+
+.reader .markdown-body ol > li::before {
+	content: counter(list-counter) ".";
+	position: absolute;
+	left: -2em;
+	width: 1.5em;
+	text-align: right;
+	font-weight: 600;
+	color: #24292f;
+}
+
+.reader .markdown-body ul {
+	padding-left: 2em;
+}
+
+.reader .markdown-body li {
+	margin: 0.25em 0;
+}
+
+.reader .markdown-body strong {
+	font-weight: 600;
+}
+
+.reader .markdown-body em {
+	font-style: italic;
+}
+
+/* ==========================================================================
+   Reader dark mode overrides for markdown elements
+   ========================================================================== */
+
+.mode-dark .reader .markdown-body {
+	color: #e2e8f0;
+}
+
+.mode-dark .reader .markdown-body h1 {
+	color: #f1f5f9;
+	border-bottom: 1px solid #334155;
+}
+
+.mode-dark .reader .markdown-body h2,
+.mode-dark .reader .markdown-body h3,
+.mode-dark .reader .markdown-body h4,
+.mode-dark .reader .markdown-body h5,
+.mode-dark .reader .markdown-body h6 {
+	color: #f1f5f9;
+}
+
+.mode-dark .reader .markdown-body :not(pre) > code {
+	color: #e2e8f0;
+	background-color: #334155;
+	border: 1px solid #475569;
+}
+
+.mode-dark .reader .markdown-body pre {
+	background-color: #334155 !important;
+	border: 1px solid #475569 !important;
+	color: #e2e8f0 !important;
+}
+
+.mode-dark .reader .markdown-body pre code,
+.mode-dark .reader .markdown-body pre tt {
+	color: #e2e8f0 !important;
+	background-color: transparent !important;
+}
+
+.mode-dark .reader .markdown-body blockquote {
+	color: #cbd5e1 !important;
+	background-color: #1e293b !important;
+	border-left: 4px solid #64748b !important;
+}
+
+.mode-dark .reader .markdown-body hr {
+	border-top: 1px solid #334155;
+}
+
+.mode-dark .reader .markdown-body ol > li::before {
+	color: #e2e8f0;
+}
+
+/* Dark mode: Tables in reader */
+.mode-dark .reader .markdown-body table th {
+	background-color: #1e293b !important;
+	color: #f1f5f9 !important;
+}
+
+.mode-dark .reader .markdown-body table tr {
+	background-color: #0f172a !important;
+	border-top: 1px solid #334155 !important;
+}
+
+.mode-dark .reader .markdown-body table tr:nth-child(2n) {
+	background-color: #1e293b !important;
+}
+
+.mode-dark .reader .markdown-body table th,
+.mode-dark .reader .markdown-body table td {
+	border: 1px solid #334155 !important;
+	color: #e2e8f0 !important;
+}
+
+/* ==========================================================================
+   Reader syntax highlighting (moved from html.css)
+   ========================================================================== */
+
+/* Remove text shadow effects from Prism.js syntax highlighting */
+.reader .markdown-body pre code .token,
+.reader .markdown-body pre .token {
+	text-shadow: none !important;
+}
+
+/* Light mode: Keep Prism.js default colors but remove text-shadow */
+.mode-light .reader .markdown-body pre code *,
+.mode-light .reader .markdown-body pre * {
+	text-shadow: none !important;
+}
+
+/* Dark mode: Custom syntax highlighting colors for better readability */
+.mode-dark .reader .markdown-body pre code *,
+.mode-dark .reader .markdown-body pre * {
+	text-shadow: none !important;
+}
+
+/* Dark mode syntax highlighting - elegant and noble colors */
+.mode-dark .reader .markdown-body pre .token.comment,
+.mode-dark .reader .markdown-body pre .token.prolog,
+.mode-dark .reader .markdown-body pre .token.doctype,
+.mode-dark .reader .markdown-body pre .token.cdata {
+	color: #a0a9ba !important;
+	font-style: italic;
+}
+
+.mode-dark .reader .markdown-body pre .token.punctuation {
+	color: #e2e8f0 !important;
+}
+
+.mode-dark .reader .markdown-body pre .token.property,
+.mode-dark .reader .markdown-body pre .token.tag,
+.mode-dark .reader .markdown-body pre .token.boolean,
+.mode-dark .reader .markdown-body pre .token.number,
+.mode-dark .reader .markdown-body pre .token.constant,
+.mode-dark .reader .markdown-body pre .token.symbol,
+.mode-dark .reader .markdown-body pre .token.deleted {
+	color: #8bb8e8 !important;
+}
+
+.mode-dark .reader .markdown-body pre .token.selector,
+.mode-dark .reader .markdown-body pre .token.attr-name,
+.mode-dark .reader .markdown-body pre .token.string,
+.mode-dark .reader .markdown-body pre .token.char,
+.mode-dark .reader .markdown-body pre .token.builtin,
+.mode-dark .reader .markdown-body pre .token.inserted {
+	color: #c8e6c9 !important;
+}
+
+.mode-dark .reader .markdown-body pre .token.operator,
+.mode-dark .reader .markdown-body pre .token.entity,
+.mode-dark .reader .markdown-body pre .token.url,
+.mode-dark .reader .markdown-body pre .language-css .token.string,
+.mode-dark .reader .markdown-body pre .style .token.string {
+	color: #cbd5e1 !important;
+	font-weight: normal !important;
+	background: none !important;
+}
+
+.mode-dark .reader .markdown-body pre .token.atrule,
+.mode-dark .reader .markdown-body pre .token.attr-value,
+.mode-dark .reader .markdown-body pre .token.keyword {
+	color: #d4af37 !important;
+}
+
+.mode-dark .reader .markdown-body pre .token.function,
+.mode-dark .reader .markdown-body pre .token.class-name {
+	color: #dda0dd !important;
+}
+
+.mode-dark .reader .markdown-body pre .token.regex,
+.mode-dark .reader .markdown-body pre .token.important,
+.mode-dark .reader .markdown-body pre .token.variable {
+	color: #f4a460 !important;
+}
+

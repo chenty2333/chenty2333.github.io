@@ -33,6 +33,8 @@
   let histIdx = -1;
   let fsIndex = {};
   let cwd = sessionStorage.getItem(SS_KEYS.cwd) || env.ROOT;
+  // whether session restore (output/history) has completed
+  let sessionRestored = false;
 
   applyTheme(env.THEME);
   applyFontSize(env.FONTSIZE);
@@ -62,7 +64,7 @@
       const hasSaved = output.childElementCount > 0;
       // Only show welcome/MOTD when there's no prior session output
       if (!hasSaved) {
-        println(`欢迎来到 Terminal Notes. 输入 'help' 查看命令, 'read readme.md' 查看指南.`);
+        println(`欢迎! 输入 'help' 或 'read readme.md' 查看指南. 或者试试 'ya' !?`);
       }
       ensureInputLine();
       focusInput();
@@ -91,29 +93,35 @@
   }
   function initMode() {
     const root = document.documentElement;
-    const saved = localStorage.getItem(LS_KEYS.mode) || 'mode-light';
-    const isLight = saved === 'mode-light';
+    const key = LS_KEYS.mode;
     
-    // 确保 app 元素和根元素都有正确的模式类
-    // (根元素应该已经由内联脚本设置，这里是确保同步)
-    [root, app].forEach(el => {
-      el.classList.toggle('mode-light', isLight);
-      el.classList.toggle('mode-dark', !isLight);
-    });
-    
+    // 切换模式的函数
+    const toggleMode = () => {
+      const isCurrentlyLight = root.classList.contains('mode-light');
+      const newIsLight = !isCurrentlyLight;
+      
+      root.classList.toggle('mode-light', newIsLight);
+      root.classList.toggle('mode-dark', !newIsLight);
+      
+      // 将新设置保存到 localStorage
+      localStorage.setItem(key, newIsLight ? 'mode-light' : 'mode-dark');
+    };
+
+    // 监听按钮点击
     if (headerBtn) {
-      // 主页：按钮显示为 emoji，并承担明暗切换功能
       headerBtn.textContent = '🌗';
       headerBtn.title = '切换明暗';
-      headerBtn.addEventListener('click', () => {
-        const newIsLight = !root.classList.contains('mode-light');
-        [root, app].forEach(el => {
-          el.classList.toggle('mode-light', newIsLight);
-          el.classList.toggle('mode-dark', !newIsLight);
-        });
-        localStorage.setItem(LS_KEYS.mode, newIsLight ? 'mode-light' : 'mode-dark');
-      });
+      headerBtn.addEventListener('click', toggleMode);
     }
+
+    // 监听 localStorage 变化，以便在多个标签页之间同步
+    window.addEventListener('storage', (event) => {
+      if (event.key === key) {
+        const isLight = event.newValue === 'mode-light';
+        root.classList.toggle('mode-light', isLight);
+        root.classList.toggle('mode-dark', !isLight);
+      }
+    });
   }
   function applyFontSize(px) {
     document.documentElement.style.setProperty('--terminal-font-size', `${px || 16}px`);
@@ -179,6 +187,8 @@
         output.scrollTop = output.scrollHeight;
       }
       if (Array.isArray(savedHist)) history = savedHist;
+  // Mark that restore completed so other handlers can wait on it
+  sessionRestored = true;
     } catch {}
   }
   window.addEventListener('beforeunload', saveState);
@@ -505,4 +515,31 @@
   
   document.getElementById('terminal')?.addEventListener('click', safeFocus);
   output?.addEventListener('click', safeFocus);
+
+  // When the page is shown/restored (history back / bfcache), ensure input exists and is focused.
+  // This fixes the case where returning from another page (like ya) leaves the prompt unfocused
+  // and requires a click before typing.
+  const restoreFocus = () => {
+    try {
+      // If the session restore hasn't completed yet, retry briefly so the
+      // restored output is appended before we create the input line. This
+      // avoids the input-line being inserted above restored content.
+      restoreFocus.attempts = (restoreFocus.attempts || 0) + 1;
+      if (!sessionRestored && output && output.childElementCount === 0 && restoreFocus.attempts <= 5) {
+        setTimeout(() => restoreFocus(), 120);
+        return;
+      }
+
+      // ensure the input line exists, then focus it
+      ensureInputLine();
+      // small delay helps on some browsers that restore focus asynchronously
+      setTimeout(() => { try { focusInput(); } catch (e) {} }, 10);
+    } catch (e) { /* ignore */ }
+  };
+
+  window.addEventListener('pageshow', (e) => { restoreFocus(); });
+  window.addEventListener('popstate', () => { restoreFocus(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') restoreFocus();
+  });
 })();

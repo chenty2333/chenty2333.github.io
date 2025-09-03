@@ -13,7 +13,16 @@
     <!-- 防止模式闪烁：在页面渲染前设置正确的模式 -->
     <script>
       (function() {
-        const saved = localStorage.getItem('tn_mode') || 'mode-light';
+        const key = 'tn_mode';
+        let saved = localStorage.getItem(key);
+        
+        if (!saved) {
+          // 如果没有保存的设置，则根据系统偏好设置
+          const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          saved = prefersDark ? 'mode-dark' : 'mode-light';
+          localStorage.setItem(key, saved);
+        }
+        
         const isLight = saved === 'mode-light';
         const root = document.documentElement;
         root.classList.toggle('mode-light', isLight);
@@ -22,7 +31,7 @@
     </script>
     <!-- 版本控制：修改此版本号可强制刷新所有缓存 -->
     <script>
-      const CACHE_VERSION = '3.1.2';
+      const CACHE_VERSION = '3.2.0';
     </script>
   </head>
   <body>
@@ -65,6 +74,7 @@
         './commands/whoami.js',
         './commands/uname.js',
         './commands/wc.js',
+        './commands/ya.js',
         './terminal.js'
       ];
 
