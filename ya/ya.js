@@ -863,10 +863,11 @@ class YaExplorer {
     // 渲染路径显示
     renderPath() {
         const pathDisplay = document.getElementById('pathDisplay');
-        const displayPath = this.currentPath.startsWith('notes') 
-            ? '~' + this.currentPath.slice('notes'.length) 
-            : this.currentPath;
-        pathDisplay.textContent = displayPath || '~';
+        // 显示以 notes 开头的完整路径，不再使用 '~' 提示
+        const displayPath = this.currentPath && this.currentPath.length > 0
+            ? this.currentPath
+            : 'notes';
+        pathDisplay.textContent = displayPath;
     }
     
     // 渲染左侧面板
@@ -1115,7 +1116,9 @@ class YaExplorer {
     }
 }
 
-// 初始化应用
+// 初始化应用（带幂等保护）
 document.addEventListener('DOMContentLoaded', () => {
+    if (window.__YA_BOOTED) return;
+    window.__YA_BOOTED = true;
     new YaExplorer();
 });

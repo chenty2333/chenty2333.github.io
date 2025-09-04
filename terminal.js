@@ -542,4 +542,57 @@
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') restoreFocus();
   });
+
+  // --- Global hotkeys (requires hotkeys.js) ---
+  // Ctrl+C: interrupt current input (do not interfere with normal copy)
+  // Ctrl+L: clear screen
+  function hasGlobalSelection() {
+    try {
+      const sel = window.getSelection && window.getSelection();
+      return !!sel && typeof sel.toString === 'function' && sel.toString().length > 0;
+    } catch { return false; }
+  }
+  function hasInputSelection() {
+    try {
+      const el = document.activeElement;
+      return el && el.tagName === 'INPUT' && typeof el.selectionStart === 'number' && el.selectionEnd > el.selectionStart;
+    } catch { return false; }
+  }
+  function echoCaretC() {
+    const div = document.createElement('div');
+    div.className = 'line';
+    div.textContent = '^C';
+    output.appendChild(div);
+    output.scrollTop = output.scrollHeight;
+    trimOutput();
+  }
+  function clearScreen() {
+    // Remove all lines and recreate input line
+    output.innerHTML = '';
+    ensureInputLine();
+  }
+  function interruptInput() {
+    // Remove current input line, print ^C, then create new input line
+    const last = output.lastElementChild;
+    if (last && last.classList.contains('input-line')) last.remove();
+    echoCaretC();
+    ensureInputLine();
+  }
+
+  if (window.hotkeys) {
+    // Allow hotkeys to work even when focus is in inputs
+    hotkeys.filter = function() { return true; };
+
+    hotkeys('ctrl+l', { element: document }, (e) => {
+      e.preventDefault();
+      clearScreen();
+    });
+
+    hotkeys('ctrl+c', { element: document }, (e) => {
+      // If there's a selection (global or in input), let the browser copy
+      if (hasGlobalSelection() || hasInputSelection()) return; // don't prevent default
+      e.preventDefault();
+      interruptInput();
+    });
+  }
 })();

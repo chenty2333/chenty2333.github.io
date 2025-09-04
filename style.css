@@ -258,6 +258,12 @@ body {
 .mode-light .header-btn--terminal { color: #2563eb; } /* 比 #3b82f6 略深 */
 .mode-dark .header-btn--terminal { color: #3b82f6; } /* 比 #60a5fa 略深 */
 
+.header-btn--ya {
+  font-weight: 700; /* 更粗的字重 */
+}
+.mode-light .header-btn--ya { color: #F8485F; } /* muted ochre (low saturation) */
+.mode-dark .header-btn--ya { color: #d8b46a; }  /* warm gold (low saturation) */
+
 /* 自定义“粗下划线”以替代字体 underscore 的粗细受限问题 */
 .header-btn--terminal .btn-underscore {
   display: inline-block;

@@ -16,7 +16,7 @@
     </script>
     <!-- 版本控制：修改此版本号可强制刷新所有缓存 -->
     <script>
-      const CACHE_VERSION = '3.2.1';
+      const CACHE_VERSION = '3.2.2';
     </script>
     <script src="./scripts/loader.js?v=${CACHE_VERSION}"></script>
     <script>
@@ -31,6 +31,20 @@
       })();
     </script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.30.0/themes/prism.min.css" integrity="sha384-rCCjoCPCsizaAAYVoz1Q0CmCTvnctK0JkfCSjx7IIxexTBg+uCKtFYycedUjMyA2" crossorigin="anonymous" />
+  <script src="https://cdn.jsdelivr.net/npm/hotkeys-js@3.13.7/dist/hotkeys.min.js" integrity="sha384-sEDMZQTPyHjKRqJDJ3uRzZ8fKsX7dJvacMzLCEUO9j2JtdeTvCeDoUR181LyDr5O" crossorigin="anonymous"></script>
+  <!-- Flowing script font for YA button (reader-only) -->
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap');
+    /* Apply the font only to the YA button variant */
+    .header-btn--ya {
+      font-family: 'Great Vibes', 'Allura', 'Parisienne', 'Dancing Script', cursive;
+      font-weight: 400; /* Great Vibes ships as regular weight */
+      letter-spacing: 0.01em;
+      line-height: 1;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+  </style>
   </head>
   <body>
   <button id="header-btn" class="header-btn header-btn--terminal" title=">_ Terminal" aria-label=">_ Terminal">&gt;<span class="btn-underscore" aria-hidden="true"></span></button>
@@ -63,12 +77,25 @@
         const contentEl = document.getElementById('content');
         contentEl?.setAttribute('data-theme', isLight ? 'light' : 'dark');
 
-        // Header button: always Terminal (>_) across devices
+        // Header button: switch to YA when coming from YA
         const headerBtn = document.getElementById('header-btn');
         if (headerBtn) {
+          const ref = document.referrer || '';
+          const cameFromYa = /\/ya\/ya\.html(?:\?|$)/.test(ref);
+          if (cameFromYa) {
+            headerBtn.classList.remove('header-btn--terminal');
+            headerBtn.classList.add('header-btn--ya');
+            headerBtn.title = 'YA';
+            headerBtn.setAttribute('aria-label', 'YA');
+            headerBtn.textContent = 'YA';
+          }
           headerBtn.onclick = (e) => {
             e.preventDefault();
-            location.href = './index.html?path=' + encodeURIComponent(from);
+            if (headerBtn.classList.contains('header-btn--ya')) {
+              location.href = './ya/ya.html?path=' + encodeURIComponent(from);
+            } else {
+              location.href = './index.html?path=' + encodeURIComponent(from);
+            }
           };
         }
         
@@ -84,7 +111,7 @@
         const displayPath = file.startsWith('notes/') ? '~' + file.slice(5) : file;
         pathEl.textContent = displayPath;
         
-        try {
+  try {
           const isMD = /\.md$/i.test(file);
           const res = await fetch('./' + file);
           if (!res.ok) throw new Error('无法加载: ' + file);
@@ -110,6 +137,47 @@
           }
         } catch (err) {
           contentEl.textContent = String(err);
+        }
+      })();
+    </script>
+    <script>
+      // ESC to go back: if navigated from terminal (index.html) go back to terminal; if from ya, go back to ya.
+      (function(){
+        function resolveBackUrl() {
+          try {
+            const params = new URLSearchParams(location.search);
+            const from = params.get('from') || 'notes';
+            // Heuristic: if referrer contains '/ya/ya.html' treat origin as YA
+            const ref = document.referrer || '';
+            const cameFromYa = /\/ya\/ya\.html(?:\?|$)/.test(ref);
+            if (cameFromYa) {
+              return `./ya/ya.html?path=${encodeURIComponent(from)}`;
+            }
+            // default to terminal
+            return `./index.html?path=${encodeURIComponent(from)}`;
+          } catch { return null; }
+        }
+
+        function goBack() {
+          const url = resolveBackUrl();
+          if (url) {
+            location.href = url;
+          } else if (history.length > 1) {
+            history.back();
+          } else {
+            location.href = './index.html';
+          }
+        }
+
+        if (window.hotkeys) {
+          // Enable hotkeys even inside inputs
+          hotkeys.filter = function(){ return true; };
+          hotkeys('esc', { element: document }, function(e){ e.preventDefault(); goBack(); });
+        } else {
+          // Fallback: keydown listener
+          window.addEventListener('keydown', function(e){
+            if (e.key === 'Escape') { e.preventDefault(); goBack(); }
+          });
         }
       })();
     </script>
