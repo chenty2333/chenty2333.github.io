@@ -1,9 +1,18 @@
 {
   "notes": {
+    "calc": {},
+    "linalg": {},
+    "OS": {},
     "readme.md": {
       "path": "notes/readme.md",
       "type": "file",
       "size": 10130,
+      "mtime": "2025-09-07"
+    },
+    "schedule.md": {
+      "path": "notes/schedule.md",
+      "type": "file",
+      "size": 641,
       "mtime": "2025-09-07"
     }
   }
