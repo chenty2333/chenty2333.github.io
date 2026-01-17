@@ -5,12 +5,33 @@
       "CSAPP 3.6.md": {
         "path": "notes/CSAPP/CSAPP 3.6.md",
         "type": "file",
-        "size": 4977,
+        "size": 4837,
         "mtime": "2025-09-16"
       }
     },
+    "daily": {
+      "2025-10-11.md": {
+        "path": "notes/daily/2025-10-11.md",
+        "type": "file",
+        "size": 77,
+        "mtime": "2025-10-11"
+      }
+    },
     "linalg": {},
-    "OS": {},
+    "OS": {
+      "OS1K：用户地址空间与用户进程.md": {
+        "path": "notes/OS/OS1K：用户地址空间与用户进程.md",
+        "type": "file",
+        "size": 21625,
+        "mtime": "2026-01-17"
+      },
+      "user_process_notes.md": {
+        "path": "notes/OS/user_process_notes.md",
+        "type": "file",
+        "size": 19222,
+        "mtime": "2026-01-17"
+      }
+    },
     "readme.md": {
       "path": "notes/readme.md",
       "type": "file",

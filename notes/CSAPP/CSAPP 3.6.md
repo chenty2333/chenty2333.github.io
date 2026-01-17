@@ -53,7 +53,7 @@ done:
 
 分支中无副作用时, 可以使用:
 
-```
+```c
 v = then-expr;
 ve = else-expr
 t = test-expr;
@@ -179,7 +179,7 @@ void switch_eg(long x, long n, long *dest)
 }
 ```
 
-```
+```c
 void switch_eg_impl(long x, long n, long *dest)
 {
 	static void *jt[7] = {
@@ -250,76 +250,5 @@ switch_eg:
   .quad		.L8								case 105: loc_def
   .quad		.L7								case 106: loc_D
 ```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
