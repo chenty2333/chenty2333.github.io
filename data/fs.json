@@ -25,6 +25,12 @@
         "size": 21625,
         "mtime": "2026-01-17"
       },
+      "syscall_mechanism_notes.md": {
+        "path": "notes/OS/syscall_mechanism_notes.md",
+        "type": "file",
+        "size": 13563,
+        "mtime": "2026-01-18"
+      },
       "user_process_notes.md": {
         "path": "notes/OS/user_process_notes.md",
         "type": "file",
