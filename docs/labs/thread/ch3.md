@@ -157,7 +157,19 @@ pool->queue_head = (pool->queue_head + 1) % pool->queue_capacity;
 
 最后，当老板决定关门不干了（调用 `thread_pool_destroy`），他不能直接拔电源（强制杀掉线程），因为这样会把正在执行的任务搞坏，还会造成内存泄漏。
 
-我们需要让老板告诉所有人“准备下班啦”（设置 `pool->stop = 1`），接着用大喇叭把所有在睡觉的员工叫醒。然后老板要站在门口，等每一个员工收拾好东西走人。这就要用到 `pthread_join`。
+我们需要让老板告诉所有人“准备下班啦”（先加锁，设置 `pool->stop = 1`，再解锁）。
+但这就够了吗？不够！回忆一下刚才讲的条件变量：有些打工线程可能正因为队列为空，而在 `not_empty` 这个条件变量专属的 Waitqueue 里呼呼大睡呢！如果不把它们叫醒，它们会睡到地老天荒，导致程序永远卡住无法退出。
+
+所以，老板必须拿起大喇叭，用 `pthread_cond_broadcast(&pool->not_empty)` 把所有在睡觉的员工全部叫醒。
+打工线程被唤醒后，会重新抢锁，并再次检查 `while` 循环的条件或者 `if (stop == 1 && queue_size == 0)`。一看 `stop == 1` 了，就知道“哦，没活干而且关门大吉了”，于是直接跳出循环，结束线程函数（`return NULL;`）。
+
+最后，老板要站在门口，亲自清点人数，等每一个员工收拾好东西走人。这就要用到一个 `for` 循环和 `pthread_join`：
+
+```c
+for (int i = 0; i < pool->thread_count; ++i) {
+  pthread_join(pool->threads[i], NULL);
+}
+```
 
 ```c
 pthread_join(thread_id, NULL);
