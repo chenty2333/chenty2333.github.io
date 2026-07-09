@@ -125,11 +125,12 @@
     updateBreadcrumb(path);
 
     try {
-      let res = await fetch(path);
+      const cacheBust = `?_=${Date.now()}`;
+      let res = await fetch(path + cacheBust, { cache: 'no-store' });
       // If direct .md not found, try as directory with index.md
       if (!res.ok) {
         const dirPath = path.replace(/\.md$/, '/index.md');
-        res = await fetch(dirPath);
+        res = await fetch(dirPath + cacheBust, { cache: 'no-store' });
       }
       if (!res.ok) throw new Error(res.status);
       const md = await res.text();
