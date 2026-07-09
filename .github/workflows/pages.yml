@@ -53,6 +53,8 @@ jobs:
           curl --fail --silent http://127.0.0.1:8000/app.js >/dev/null
           curl --fail --silent http://127.0.0.1:8000/docs/index.md >/dev/null
           curl --fail --silent http://127.0.0.1:8000/docs/labs/thread/ch2.md >/dev/null
+          curl --fail --silent http://127.0.0.1:8000/docs/labs/thekernel-io-boost/index.md >/dev/null
+          curl --fail --silent http://127.0.0.1:8000/docs/labs/thekernel-io-boost/ch8.md >/dev/null
 
       - name: Configure GitHub Pages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

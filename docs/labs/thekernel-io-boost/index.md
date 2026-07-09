@@ -2,22 +2,22 @@
 
 这组文章记录 TheKernel 文件 I/O 路径的一轮优化过程。
 
-TheKernel 的 iozone 分数不理想。经过 profiler 定位，瓶颈不在请求合并（块请求已经足够大），而在块设备层的**队列深度只有 1** 加上**同步忙轮询**。后续工作围绕这个瓶颈展开：构建异步批量块设备队列，再逐步接入 dirty flush、用户页直连、lwext4 读路径等 consumer。
+TheKernel 的 iozone 分数不理想。最初的计划押注在激进改造 lwext4 和 page cache 上，绝大多数尝试被否决。profiler 逐层归因后发现：瓶颈不在请求碎片化、不在文件系统、不在锁里的工作量，而在块设备层的**队列深度只有 1** 加上**请求提交后的被动等待**。后续工作围绕这个瓶颈展开：构建异步批量块设备队列，再逐步接入 dirty flush、用户页直连、lwext4 读路径等 consumer。
 
-中间被回滚的实验比留下的多。这些失败同样有记录价值，因此也写在里面。
+### 目录
 
-## 章节
+- [ch1：I/O 路径与 iozone](#/labs/thekernel-io-boost/ch1) — profiler 定位瓶颈
+- [ch2：最初的计划](#/labs/thekernel-io-boost/ch2) — 激进 lwext4 蓝图
+- [ch3：被否决的实验](#/labs/thekernel-io-boost/ch3) — 按方向分组的否决记录
+- [ch4：async/batch block queue](#/labs/thekernel-io-boost/ch4) — 异步队列引擎
+- [ch5：page cache dirty run flush](#/labs/thekernel-io-boost/ch5) — 第一个 consumer
+- [ch6：pin/unpin 与 user direct I/O](#/labs/thekernel-io-boost/ch6) — 用户页 consumer
+- [ch7：lwext4 read path](#/labs/thekernel-io-boost/ch7) — 文件系统读路径 consumer
+- [ch8：复盘](#/labs/thekernel-io-boost/ch8) — 分数、陷阱、留下来的能力
 
-- [ch1：I/O 路径与 iozone](#/labs/thekernel-io-boost/ch1) — 用 profiler 定位瓶颈
-- [ch2：被否决的上层优化实验](#/labs/thekernel-io-boost/ch2)
-- [ch3：async/batch block queue](#/labs/thekernel-io-boost/ch3) — 异步队列引擎
-- [ch4：page cache dirty run flush](#/labs/thekernel-io-boost/ch4) — 第一个 consumer
-- [ch5：用户页直连与 lwext4 读路径](#/labs/thekernel-io-boost/ch5) — 更高收益、更高风险的 consumer
-- [ch6：复盘](#/labs/thekernel-io-boost/ch6) — 分数、踩坑、留下来的能力
+### 结果说明
 
-## 结果说明
-
-这轮优化**没有**产生 iozone 分数的显著提升。focused iozone 在改动后无明显退化，个别配置下有小幅提升，但在运行间波动范围内。真正留下来的是一套块设备层的异步能力——可以继续扩展的系统基础设施，而非针对单一 benchmark 的捷径。
+优化前（2026-06-30 评测），iozone 每个测试点得分为 20.0。经过这轮工作后，单测试点提升到 ~22，提升约 10%。
 
 文章中的结论尽量落回具体路径和具体数据。分数、counter 值如实记录；没有证据支撑的判断会标明。
 

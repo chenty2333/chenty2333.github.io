@@ -1,127 +1,122 @@
-# 被否决的上层优化实验
+# 最初的计划
 
-在确认瓶颈位于块设备层之前，我们在上层（page cache、文件系统、缓存策略、用户缓冲区路径）尝试了大量优化方案。绝大多数最终被回滚。
+在 [ch1](#/labs/thekernel-io-boost/ch1) 的 profiler 把方向指向块设备层之前，最初的优化计划押注在另一个方向上：**激进改造 lwext4 和 page cache**。
 
-本章整理其中有代表性的几组实验，记录每一组的**改法**、**测量结果**和**否决原因**。它们共同指向一个结论：当块请求流已经充分合并、而队列深度锁死在 1 时，在上层继续做 1KB 级别的状态优化不会产生有效收益。
+当时的判断是：iozone 慢，主要因为 TheKernel 的文件 I/O 热路径上存在大量可省掉的重复工作——每次读写都重新查 inode、逐块查 extent 映射、数据在 `VmBytes` 用户拷贝包装和内核缓冲之间多次搬运、readahead 先读进 scratch `Vec` 再逐页拷入 page cache。计划的核心策略是从 Linux 成熟的机制里借设计思想，但只实现 TheKernel 专属的小型等价物。
 
-## 基准与测量方法
+## 热路径上的具体问题
 
-所有实验使用同一套测量口径：
+iozone 以 1KB **record** 驱动整条文件 I/O 链路。路径上每一层都有固定成本；1KB 粒度下，这些成本无法被摊薄。计划针对的是下表中的重复工作，而不是某一条 benchmark 命令本身。
+
+| 环节 | 现状（计划制定时） | 计划中的对策 |
+|---|---|---|
+| inode 查找 | 每次 `read_at` / `write_at` 重新解析 inode | 热 inode 缓存（16 项 LRU） |
+| extent 映射 | 逐逻辑块查 extent 树 | extent status cache + 多块 `get_blocks` |
+| 用户缓冲 I/O | `VmBytes` 包装 + 内核临时缓冲多次拷贝 | 用户页 pin + 同步/异步 direct I/O |
+| page cache miss | scratch `Vec` 读满窗口再逐页插入 | scratch 移除、对齐 bypass、cluster |
+| dirty 写回 | 小窗口逐页 flush | 范围 writeback、脏页节流 |
+| 块设备提交 | submit one, wait one | plug → blk-mq 式有界队列（Phase 6） |
+
+计划把 **blk-mq 式块队列**排在 Phase 6。profiler 归因完成之前，上层文件系统与 page cache 改造是主战场。
+
+## 借鉴的 Linux 机制
+
+**extent status tree**：Linux ext4 在内存里维护一棵 extent 状态树，记录每段逻辑块的状态（written / hole / unwritten / delayed），查磁盘 extent 树之前先查它，内存压力下回收条目。计划要在 `lwext4_rust` 里实现一个有界的 per-inode Rust 等价物，先支持 written 和 hole 两种状态。
+
+**mini-iomap**：Linux iomap 把映射查询和 page cache / direct I/O 机制分离，并用一个 validity cookie 检测过期映射。计划要加 `MappedRun` / `MapSeq` 抽象，让 page cache 和 direct 路径能安全消费同一批映射 run，任何使映射失效的操作（truncate、hole punch、重分配）都递增 sequence。
+
+**multi-block allocation**：Linux ext4 的多块分配器一次分配连续 run，减少碎片。计划要在 Rust 侧暴露 `ext4_extent_get_blocks(..., max_blocks, create=true)` 接口，为顺序整块写一次性分配连续物理块。
+
+**pin_user_pages**：Linux 区分短期 DIO pin 和长期 DMA pin。计划要让用户页 I/O 先做短期同步 pin，只有在 pin/unpin 基础设施成熟后才允许异步 DIO 让用户页活过系统调用返回。
+
+**blk-mq**：Linux blk-mq 用软件队列、请求合并、tag、硬件派发队列实现多队列块层。计划要先加一个小的 plug（攒批）作用域，再演进成带请求 tag / 合并 / barrier / completion 队列的有界块队列。
+
+## 八个阶段
+
+| 阶段 | 内容 | 依赖 |
+|---|---|---|
+| Phase 0 | 基线、计数器、验收门槛 | — |
+| Phase 1 | lwext4 热 inode 缓存、extent 状态缓存、extent 预取、多块映射/分配 | Phase 0 |
+| Phase 2 | mini-iomap 映射 I/O、overwrite-only 快路径、对齐 page cache bypass、scratch 拷贝移除 | Phase 1 |
+| Phase 3 | page cache cluster（大 folio 等价物）、范围 writeback、脏页节流、sync 延迟 | Phase 2 |
+| Phase 4 | 用户页 slice、批量缺页、显式 pin/unpin、同步用户缓冲直连 I/O | Phase 3 |
+| Phase 5 | 基于 pin 页的异步 direct I/O、completion 队列、取消/退出清理 | Phase 4 |
+| Phase 6 | VirtIO 请求 plugging、有界多请求在飞、blk-mq 式调度 | Phase 5 |
+| Phase 7 | delalloc-lite、extent 级锁拆分、高并发扩展 | Phase 6 |
+
+Phase 5 依赖 Phase 4 的 pin/unpin 成熟。Phase 7 的 delalloc-lite 被标为高风险，需要独立正确性阶段。Phase 6 的 blk-mq 式块队列后来成为真正落地的方向——但在最初计划里排在第六位，远非第一优先级。
+
+## Phase 0 验收门槛
+
+Phase 0 不给功能，只建立测量与回滚能力：
 
 - **基准分数**（cap1024 no-stats baseline）：44.099（RV，musl 22.465 + glibc 21.634）
-- **对比方式**：同一份 support image、同一版 `src/init.sh`、no-stats 模式
+- **对比方式**：同一份 support image、同一版 `src/init.sh`、**no-stats** 模式
 - **判定标准**：总分相对基准的百分比变化；musl / glibc 分项是否出现显著退化
 
 > **no-stats 模式**
 >
 > 指运行时不开启 `/proc/io_stats` 的 VirtIO 诊断计数器。开启诊断时每次忙等轮询都会执行额外的原子递增，会干扰吞吐测量。性能判定必须在 no-stats 下完成。
 
-## 1KB pending 聚合
+计数器通过 `/proc/io_stats` 暴露，默认关闭（`on` / `off` / `reset`）。任何后续 Phase 的改动都必须在 counter 可观测、kill switch 可回滚的前提下推进。
 
-**改法**：在 page cache 层面做单页 pending 缓冲——持有一个 inode 局部的 4KiB 页，维护 4-bit 1KiB 覆盖掩码。只接受对已有完整页的精确 1KiB 对齐重写，等四个 chunk 凑齐后一次提交，跳过旧页读取。
+## 约束
 
-**结果**：
+计划给自己定了一组硬约束：
 
-```text
-RV musl:  161917 -> 138857  (-14.24%)
-RV glibc: 167426 -> 149805  (-10.52%)
-```
+- 不为 benchmark 名字、组标记、进程名、路径名做特化
+- 保留全部文件语义：`fsync`、`fdatasync`、`O_SYNC`、truncate、unlink、rename、mmap 可见性
+- 窄改动 + 回滚开关，优于大重写
+- 当前 benchmark 数值只当趋势证据，不当最终评测预测
+- 如果激进设计太危险，落地安全部分，把被否决的设计连同失败模式一起记录
 
-计数器显示命中率很高（`cached.write_pending_rewrite_chunks` = 60276），但总分大幅退化。
+## 实际落地的子集
 
-**否决原因**：跳过的旧页读取并不是瓶颈。额外的 per-1KiB 栈拷贝、pending 锁状态维护、以及对 page cache 原有 readahead 路径的干扰，合计成本超过了省下的磁盘读。在请求流已经合并到 ~135KiB/个的情况下，在 1KiB 粒度上省一次旧页读取没有意义。
+截至第一个实现检查点，真正留下来的只有一个安全子集：
 
-## lazy partial-rewrite valid-prefix 追踪
+### 热 inode 缓存
 
-**改法**：为每个 page cache 页维护一个 valid-prefix 字节偏移，记录该页从头开始有多少字节已经是有效数据。对于前缀写入或超出旧 EOF 的写入，跳过旧页读取，缺失字节延迟到读取时再 materialize（从磁盘补齐）。
+`lwext4_rust::hot.rs`：固定 16 项 LRU。`read_at` / `write_at` 走 `with_cached_inode_ref`；`flush` / drop 和元数据操作前 drain；`set_len` / `set_symlink` 时 invalidate。
 
-**结果**：
+### 多块 extent 映射
 
-| 架构/libc | 变化 |
-|---|---|
-| RV musl | -1.0% |
-| RV glibc | +4.8% |
-| LA musl | +0.2% |
-| LA glibc | -5.2% |
+`ext4_extent_get_blocks` 包装：`create=false` 用于多块读映射，`create=true` 用于整块写分配，保留单块 helper 作 fallback。
 
-进一步收窄为「仅 page-prefix 或 beyond-old-EOF」的变体，LA glibc 仍退化 -2.7%。
+### 对齐 page cache bypass
 
-**否决原因**：valid-prefix 的簿记和 lazy materialize 的分支成本在 1KiB workload 下过高，尤其对 LoongArch64。收益不稳定、跨架构不一致，不满足接受标准。
-
-## CRC32c 字节循环展开
-
-**改法**：在 `ext4_crc32.c` 的共享 `crc32()` 表查询辅助函数中做 unroll-by-8 展开。
-
-**结果**：总分 44.112（+0.03%），musl -2.19%，glibc +2.34%。
-
-**否决原因**：总收益在噪声范围内，musl 退化。且本地 QEMU 报告的 ISA 为 `rv64imafdch`，不含 Zbc/Zbkc 扩展。如果 emit 了 carry-less-multiply 指令，在当前目标上会触发非法指令异常。CRC 优化保留为未来 `+zbc/+zbkc` flavor 的 gated feature，不动默认代码。
-
-## 降低 FILE_IO_COOPERATE_INTERVAL
-
-**改法**：将文件 I/O 路径中强制 `axtask::yield_now()` 的间隔从 4096 次提高到 16384 次，减少协作调度的频率。
-
-**结果**：总分 44.129（+0.07% vs 基准，-1.34% vs VirtIO pending 样本）。
-
-**否决原因**：未改善目标路径，musl 退化 -2.54%。让出 CPU 的频率已经足够低，继续降低没有收益。
-
-## scheduler-yield 注入 VirtIO 等待循环
-
-**改法**：在 `virtio-drivers` 的 `wait_for_pending_done` 忙等循环中，每 256 次轮询后调用一次 `axtask::yield_now()`，期望让出 CPU 给其他任务。
-
-**结果**：QEMU 超时，内核未输出到 kernel prompt。
+`axfs-ng::CachedFile`：页对齐、非内存文件、64 KiB chunk。遵循 direct I/O 的缓存一致性——范围脏页 flush + 前后 invalidate。smoke 计数器确认路径生效：
 
 ```text
-qemu-system-riscv64: terminating on signal 15 ... (timeout 320s)
+cached.read_bypass_hits > 0
+cached.read_bypass_slice_hits > 0
+cached.write_bypass_hits > 0
+cached.write_bypass_slice_hits > 0
 ```
 
-**否决原因**：在底层块设备等待循环中直接调用调度器不是安全的中断等待策略。该上下文可能持有各种锁或 preemption guard，直接 yield 导致调度死锁或无限等待。正确做法是在更高层（文件系统 / page cache 层）将 submit 和 wait 分离，而非在 VirtIO 驱动内部注入调度。
+### disabled-by-default I/O 计数器
 
-## sub-4KiB user pin 阈值
+`/proc/io_stats` 控制字：`on` / `off` / `reset`。评测热路径默认不开启。
 
-**改法**：将 user-pin（用户页零拷贝）路径的最低阈值从 4KiB 放宽到 1KiB，让 iozone 的 1KB record 也能走 pin fast path。
+## 未完成与 default-off 的条目
 
-**结果**：
+| 条目 | 状态 | 证据 |
+|---|---|---|
+| extent status cache | 已实现，**default-off** | RV sentry 开启后 musl re-read 从 18249 掉到 4390 KB/s |
+| mini-iomap | 未实现 | — |
+| page cache scratch 拷贝移除 | 未实现（后由 ch3 实验部分覆盖） | — |
+| page cache cluster | 未实现 | — |
+| 用户页 pin/unpin、异步 DIO | 第一版未接入 iozone 热路径 | 返回用户 slice 无 pin/lifetime guard 被明确拒绝 |
+| VirtIO plugging、blk-mq 式队列 | 留待 Phase 6（后成为 ch4 主线） | — |
+| delalloc、extent 锁拆分 | 留待 Phase 7 | — |
 
-```text
-总分: 44.099 -> 43.002  (-2.49%)
-musl: 22.465 -> 21.193  (-5.66%)
-glibc: +0.81%
-```
+extent status cache 是唯一「写了代码但不敢 default-on」的 Phase 1 条目。其余大项要么未动工，要么在 profiler 归因后被更高优先级的块设备层工作取代。
 
-pin 命中很多，但总分显著退化。
+## 与后续章节的关系
 
-**否决原因**：1KiB record 下 pin probe 的固定开销（地址检查、VMA 查询、页表遍历、pin guard 管理）重复上千次，超过了省下的那一次 copy。4KiB 阈值存在的意义正是让官方 1KiB workload 完全不进入 pin 路径——计数器 `user_pin.to_user_attempts = 0` 确认了这一点。
+这份蓝图里绝大多数条目最终没有按原计划顺序落地。时间线上，三件事交叉进行：
 
-## 更宽的 retained closed-file cache（4096 页）
+1. **Phase 0–2 的安全子集**按本计划推进（热 inode、bypass、计数器）
+2. **profiler 归因**（ch1）逐步把主战场从 page cache / ext4 挪到块设备层
+3. **上层实验**（ch3）在归因前后大量尝试 readahead、锁收窄、缓存策略等方向，绝大多数被回滚
 
-**改法**：将关闭文件后保留的 page cache 页上限从 1024 提高到 4096，期望提升重读命中率。
-
-**结果**：总分 43.861（-0.54%）。部分 read 行有改善（已被 score cap 限制），部分 write 行退化。
-
-**否决原因**：加大缓存使读行提升被计分上限截断，同时挤占了写路径的内存预算，净效果为负。保持 1024 页。
-
-## naive 4KiB chunk batch submit
-
-**改法**：将大的连续 `read_block` / `write_block` buffer 拆分为多个 4KiB chunk，一次 publish 多个到 VirtIO virtqueue 中，notify 一次，再 drain。
-
-**结果**：smoke 中计数器确认机制工作（`virtio.blk_pending_max_depth = 4`，`blk_requests = 1586`，`queue_full = 0`）。但 no-stats 正式 replay 卡死在 `iozone automatic measurements`。
-
-**否决原因**：把一个本已连续的大请求拆成多个 4KiB 小请求确实创造了队列深度，但破坏了 iozone 路径的性能形态和 liveness 特性。正确方向是让上层天然产生的多个请求（来自 dirty flush、readahead 等）同时进入队列，而不是人为把一个请求切碎。
-
-## per-inode 锁收窄 / 无锁 mapped read
-
-**改法**：在 axfs-ng 中引入 64 个 inode 分片锁；克隆 ext4 disk wrapper 到 device mutex 后面；在 lwext4 中加入 `DirectReadPlan`——在全局锁内快照 written 4KiB extents 后释放锁，通过克隆 handle 做无锁读取。
-
-**结果**：总分 44.015（-0.19%）。
-
-**否决原因**：额外的 extent-planning pass 加 device mutex 没有带来吞吐收益。1KiB workload 的瓶颈不在 inode 间读并发——因为 block 完成和队列深度才是限制因素。锁收窄只是把序列化点从一处挪到另一处，增加了规划开销。
-
-## 小结
-
-这些实验覆盖了 page cache 状态优化、文件系统缓存策略、块设备等待策略、用户页 pin 阈值、锁粒度等多个方向。它们的共同特征是：
-
-1. 块请求流**已经充分合并**（~168KiB 读，~135KiB 写）。在 1KiB 粒度上继续做合并或省读没有有效收益。
-2. 队列深度**锁死在 1**。无论上层怎么优化，最终到块设备都是 submit one, wait one。上层优化触碰不到这个瓶颈。
-3. 几个试图在块设备层内部制造深度的尝试（scheduler-yield、naive 4KiB batch）都因为绕过了正确的生命周期管理而失败。
-
-正确的下一步是构建一套完整的**异步块设备队列**，从 owned request、descriptor 预算、completion 收割、hybrid wait 开始做起。下一章展开这个引擎的设计与实现。
+Phase 6 的 blk-mq 式队列在计划里排在后面，在归因完成后反而成为主线（[ch4](#/labs/thekernel-io-boost/ch4)）。ch3 记录被否决的实验；ch4 起记录真正落地的 async block queue 及 consumer。

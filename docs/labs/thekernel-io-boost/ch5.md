@@ -1,183 +1,187 @@
-# 用户页直连与 lwext4 读路径
+# page cache dirty run flush
 
-dirty run flush 处理的是**内核自己管理的页面**。本章的两个 consumer 处理的是生命周期更复杂的对象：**用户进程的页面**（user direct I/O）和**文件系统映射可能随时失效的读请求**（lwext4 read path）。
+page cache dirty run flush 是第一个接入 async/batch block queue 的 consumer。选择它作为第一个 consumer 的原因：**dirty page 由内核管理，生命周期比用户页简单得多**，同时它会真实经过文件系统和块设备的写入路径，能检验队列契约是否正确。
 
-它们复用 ch3 中建立的同一套 async block queue 契约，不再各自发明私有异步路径。
+## dirty page 从哪来
 
-## user direct I/O
-
-### 问题：用户页的生命周期
-
-用户程序调用 `read(fd, buf, len)` / `write(fd, buf, len)` 时，`buf` 是一个用户虚拟地址。内核拿到的只是一个地址值，背后的物理页面可能：
-
-- 尚未分配（lazy allocation）
-- 被 `munmap` 释放
-- 被 `mprotect` 改变权限
-- 被 `fork` 触发 COW（Copy-on-Write）
-- 进程退出后被回收
-
-如果要把用户页直接作为块设备请求的 data buffer——省掉中间 copy——就必须保证：**从 submit 到 completion 这段时间内，这些页面不能被释放、换出或复用。**
-
-### pin 机制
-
-**pin** 的含义是把一组页面在一段时间内固定住。被 pin 的页面在对应 guard 释放之前不会被内核回收。
+用户调用 `write(fd, buf, len)` 时，数据通常不会立刻落盘。内核先将用户数据写入 **page cache** 中对应的文件页，然后把该页标记为 **dirty**（已修改但尚未写回磁盘）。
 
 ```text
-PinnedUserSlice      — 单段连续 pin（读方向）
-PinnedUserSliceMut   — 单段连续 pin（写方向）
-PinnedUserSegments   — 多段 SG pin
-frame pin            — 物理页帧级别 pin
-page-cache pin       — page cache page 的 pin（用于 file-backed mmap 场景）
+write(fd, buf, len)
+  -> CachedFile::write_at
+  -> 找到或创建 page cache page
+  -> copy 用户数据到 cache page
+  -> page.dirty = true
+  -> 返回用户态
 ```
 
-这些 guard 跟着 block request slot 一起存活到 completion。completion drain 完成后才释放。这与 ch3 的 owned request 是同一个问题——request、buffer、guard 的生命周期由队列闭合，不依赖调用者栈帧。
+后续在 `fsync`、文件关闭、缓存压力、显式 flush 等时机，dirty page 才被写回文件系统和块设备。
 
-### fast path 与 fallback
+iozone 的 write / rewrite / random write / pwrite / pwritev 都会不断制造 dirty page。1KB record 下写入次数极多，page cache 中同一批页面反复被写脏。写入本身只是前半段；后半段是 dirty page **怎么刷回去**。
 
-**fast path**：用户地址满足对齐、权限、pin 条件时，直接将 pinned page slice 作为块设备请求的 segment。
+## 逐页 flush 的问题
 
-**fallback**：地址不可访问、VMA 权限不匹配、缺页失败、不对齐、segment 过多、descriptor budget 不够等情况下，退回 `VmBytes` / `VmBytesMut` 受控用户拷贝接口。
+最直接的 flush 方式——逐页写回：
 
-fallback 是**正确路径**，不是错误路径。fallback 热时需要关注的是临时 buffer 的动态分配频率——每次 fallback 都走全局分配器申请 4KiB buffer 的话，在 1KB record 下会成为热点。
+```text
+dirty page 0 -> write_at(offset=0, 4096)    -> block submit -> wait
+dirty page 1 -> write_at(offset=4096, 4096)  -> block submit -> wait
+dirty page 2 -> write_at(offset=8192, 4096)  -> block submit -> wait
+dirty page 3 -> write_at(offset=12288, 4096) -> block submit -> wait
+```
 
-### 4KiB 阈值
+语义正确，但性能差。这些页在文件偏移上连续，底层磁盘 block 很可能也连续，逐页 flush 却把它们拆成多个独立的 4KB 小请求，每个都要走一次文件系统映射、块设备提交、completion 等待。
 
-user pin fast path 设有 4KiB 最低阈值。**1KB 的 iozone record 不会进入 pin 路径**。
+**dirty run flush** 的做法：先识别连续 dirty page 组成的 **run**（连续区间），再按 run 为单位提交。
 
-原因：sub-4KiB 阈值实验（见 ch2）导致总分 -2.49%，musl -5.66%。pin probe 的固定成本（地址检查、VMA 遍历、页表查询、guard 管理）在 1KB 粒度下重复上千次，超过省下的 copy 成本。计数器 `user_pin.to_user_attempts = 0` 确认 iozone workload 完全不触及 pin 路径。
+```text
+dirty page 0..3 (连续)
+  -> 合并为一次 write_at(offset=0, 16384)
+  -> block batch submit
+```
 
-### 信号与 completion 的交互
+## Phase 5A：owned buffer 语义验证
 
-如果信号在 **submit 之前**到达，系统调用可以正常返回错误或短读写。
+第一版 dirty run flush 没有直接把 page cache page 交给块设备，而是先将 dirty run **拷贝到内核拥有的 writeback buffer** 中。
 
-如果信号在 **submit 之后**到达，请求**不可取消**。设备已经拿到了 descriptor，安全做法是等请求完成后再将信号状态反映到返回路径。
+流程：
 
-> **不可取消原则**
+```text
+拿 page-cache lock
+  -> 扫描连续 dirty page
+  -> 拷贝数据到 owned writeback buffer（16-page / 64KiB segments）
+  -> 记录 page number / offset / len
+释放 page-cache lock
+  -> file.write_at_vectored(...)   [通过 async batch queue]
+  -> wait all completions
+重新检查 page 状态
+  -> completion 成功 -> 清 dirty
+  -> completion 失败 -> 保留 dirty
+```
+
+这一步仍有一次 copy，但它解决了两个关键问题：
+
+**锁的持有时间**：块设备 I/O 需要等待 completion，等待期间不能持有 page-cache map lock，否则其他读写、缓存回收、truncate 全部被阻塞。Phase 5A 在锁内只收集数据和元信息，提交 I/O 前释放锁。
+
+**buffer 生命周期**：owned buffer 由 flush 路径自己持有，提交给块设备后不会被 page cache 回收，也不会被并发写入修改。设备完成前 buffer 始终有效。
+
+> **Phase 5A 的定位**
 >
-> 已提交的设备请求必须运行到 completion，其 guard 才能释放。不能因为收到信号就提前释放 buffer——设备可能仍在读写那段内存。计数器 `user_pin.async_signal_after_submit` 记录这种情况。
+> 它是一个**语义验证阶段**，暂时保留 copy，先证明：
+> - 连续 dirty page 能形成 run
+> - run 可以进入 vectored write
+> - async block queue 能接住这些请求
+> - dirty 标记只在 completion 成功后清除
+> - completion 失败时 dirty 状态保留
+>
+> 这一层不稳的话，直接做零拷贝只会让 bug 更难查。
 
-### counter
+实测 counter：`cached.async_dirty_flush_hits = 51`，`async_dirty_flush_pages = 1689`，`async_dirty_flush_bytes ≈ 6.86 MB`，`virtio.blk_async_max_depth = 4`。
 
-```text
-user_pin.async_direct_read_hits       — 读方向 fast path 命中
-user_pin.async_direct_write_hits      — 写方向 fast path 命中
-user_pin.async_submit_fallbacks       — fallback 到 copy 路径
-user_pin.async_signal_after_submit    — submit 后收到信号
-user_pin.async_resource_unpins        — unpin 操作计数
-user_pin.page_cache_pin_hits          — file-backed mmap 场景的 page cache pin
-```
+## Phase 5B：page-cache SG 零拷贝
 
-RV Phase 7 实测：`read_hits = 7`，`write_hits = 3`，`submit_fallbacks = 322`。大部分 user I/O 仍走 fallback——因为 4KiB 阈值把 1KB iozone 排除在外。这符合预期。
+Phase 5B 去掉 copy，把 page cache page 直接作为块设备请求的 data segment 提交。
 
-user direct I/O 默认关闭（`user_direct_async_off`），需要显式开启。它应该在 dirty flush + full replay 通过之后再开启。
+**SG**（scatter-gather）指多个不连续的内存段作为一组 segment 提交给设备。page cache 中的连续文件页在物理内存上不一定连续，但可以用多个 segment 描述。
 
-## lwext4 read path
-
-### 问题：映射可能失效
-
-文件系统的 read path 需要将**文件偏移**翻译成**磁盘 block**。lwext4 通过 inode → extent tree → physical block 完成这个映射。
-
-如果 read path 查到：
+流程：
 
 ```text
-logical block 0..3 -> physical block 1000..1003
+扫描连续 dirty page（>= 2 页、完整页、无 evict listener、未处于 writeback）
+  -> pin pages（阻止 LRU 逐出）
+  -> mark writeback
+  -> 构建 SG segments
+  -> async vectored write（通过 block queue）
+  -> completion
+  -> clear dirty / clear writeback / unpin
 ```
 
-这是一个 **mapped run**（逻辑地址连续、物理地址也连续的映射区间）。把它合并为一次大请求可以减少块设备交互次数。
+### writeback 状态的作用
 
-但这个映射**不是永久有效的**。`truncate`、`unlink`、hole punch、重新分配 block 都可能改变映射。如果在 async read submit 之后、completion 之前，另一个路径 truncate 了文件，这段映射可能已经不再属于该文件。如果 completion 后仍将数据发布到 page cache，用户就会读到**过期数据（stale read）**。
+一个 page 正在写回（writeback）时，如果并发写入直接覆盖然后 flush 路径清掉 dirty，会丢失数据：
 
-### mapping cookie
-
-为了防止 stale read，mapped read 使用 **mapping cookie**（映射序列号）机制：
-
-```text
-1. 查映射时记录当前 mapping sequence
-2. submit async read
-3. completion 返回
-4. 发布结果前，re-check mapping sequence 是否仍然 current
-5. cookie 失效 -> 丢弃结果 / fallback 重读
-```
-
-计数器 `ext4.async_mapped_read_cookie_rejects` 记录因 cookie 失效被拒绝的次数。
-
-### page cache fill
-
-buffered read 的 cache miss 路径通常是：先把文件页读入 page cache，标记 **uptodate**，再从 page cache copy 到用户 buffer。
-
-async read 的安全做法：
-
-```text
-分配 private page
-  -> submit async read
-  -> completion success
-  -> insert into page cache / mark uptodate
-```
-
-completion 之前不能把半成品 page 暴露给普通 read。只有数据完整到达后才能标记 uptodate。
-
-### sparse hole
-
-稀疏文件可能包含 **hole**（未分配物理 block 的逻辑区间）。hole 读出来应该是全零。
-
-```text
-logical block -> hole (physical = 0 / unmapped)
-  -> memset zero（不进入 block device read）
-```
-
-async mapped read 只适用于已映射、对齐、连续、target buffer 生命周期明确的范围。hole 和 fragmented extent 走同步 fallback 或零填充。
-
-### readahead
-
-顺序读时，当前 page miss 往往意味着后续 page 也即将被读取。**readahead**（预读）在读当前页时顺便把后续页读入 page cache。
-
-TheKernel 的 readahead 窗口为 64 页，默认关闭（`cached_readahead_on` / `off`），通过 counter 观测效果：
-
-```text
-cached.readahead_misses          = 248
-cached.readahead_windows         = 32
-cached.readahead_pages           = 2016
-cached.readahead_hits            = 1953
-cached.readahead_retired_unused  = 63
-```
-
-预读出来但始终未被使用的页面在缓存压力下优先退休。
-
-### 实现边界
-
-lwext4 async read 的第一版采取保守策略：
-
-- 只处理 block-aligned range
-- 只处理当前有效 mapped run（cookie 校验通过）
-- 只在 target buffer/page 能持有到 completion 时启用
-- 按 descriptor budget 和 mapped extent boundary 分 chunk
-- 保留同步 mapped-read fallback
-- LoongArch64 保守 depth
-
-非对齐 head/tail、fragmented extent、hole、cookie 失效、segment 过多等情况全部 fallback。
-
-### counter
-
-```text
-ext4.async_mapped_read_hits            — async read 触发
-ext4.async_mapped_read_runs            — mapped run 合并次数
-ext4.async_mapped_read_bytes           — async read 字节数
-ext4.async_mapped_read_fallbacks       — fallback 到同步路径
-ext4.async_mapped_read_cookie_rejects  — cookie 失效拒绝
-```
-
-RV Phase 8 实测：`hits = 1108`，`cookie_rejects = 0`，`fallbacks = 8`，`completion_errors = 0`，`resource_leaks = 0`。read path depth = 1（当前每次只提交一个 read，尚未 batch）。
-
-## 两个 consumer 的共同点
-
-| 维度 | user direct I/O | lwext4 read path |
+| 时间 | 事件 | 结果 |
 |---|---|---|
-| buffer 生命周期 | user pin guard 持有到 completion | page pin 或 owned buffer 持有到 completion |
-| 不可取消 | submit 后不能因信号释放 buffer | submit 后不能因 truncate 释放 buffer |
-| fallback | 退回 copy 路径，正确但慢 | 退回同步 mapped read，正确但慢 |
-| 默认状态 | off（`user_direct_async_off`） | off（`lwext4_async_read_off`） |
-| 正确性约束 | pin/unpin 平衡，zero leaks | cookie 有效，zero stale read |
+| t1 | flush 提交 page 内容 A | 设备开始写 A |
+| t2 | 并发 write 将 page 改为 B | 内存中是 B |
+| t3 | flush completion 成功 | dirty 被清除 |
+| t4 | — | 内存中是 B，磁盘上是 A，dirty = false → B 丢失 |
 
-两者都复用 ch3 建立的 owned request + descriptor admission + completion drain + hybrid wait 契约。不引入私有异步路径。
+解决方式：正在 writeback 的 page 被标识出来，并发写入需要等待 writeback 结束或在 writeback 后重新标记 dirty。
 
-下一章是整轮工作的复盘：分数、陷阱、真正留下来的能力。
+### SG4 chunk 限制
+
+Phase 5B 最初将整个 dirty run 映射为一个大 SG 请求（all-segments）。在 RV QEMU 下产生了 queue-full、admission stall 和 `cached.async_dirty_flush_errors`。
+
+接受的形态是 **SG4**：每个 async request 最多携带 4 个 data segment。请求数从 320（每页一个请求）→ 160（SG2）→ **80**（SG4）。
+
+> **为什么不用 indirect descriptor**
+>
+> indirect descriptor 可以让一个请求携带任意多 segment 而只消耗 1 个 virtqueue descriptor。但 indirect 的 DMA 行为和 descriptor accounting 在 LoongArch64 上尚未充分验证。SG4 保守但 descriptor 可控，作为第一个默认接受的形态。indirect / larger SG 留待 descriptor accounting 验证后再开启。
+
+### fallback 条件
+
+以下情况退回 Phase 5A owned buffer 路径（计数器 `cached.async_dirty_flush_bounce_fallbacks`）：
+
+- dirty run 包含非完整页
+- EOF 附近出现零长度或部分页
+- page 带有 mmap listener（尚无完整的写保护协议）
+- page 已经处于 writeback
+- segment 数量超过块设备 descriptor budget
+- LoongArch64 需要更保守的 descriptor 深度
+
+## dirty 标记的清除时机
+
+dirty flush 最容易出错的地方是**何时清除 dirty 标记**。
+
+正确顺序：
+
+```text
+submit write
+  -> wait completion
+  -> device 报告 success
+  -> re-check page 状态
+  -> clear dirty / clear writeback
+```
+
+不能在 submit 时清 dirty。submit 只表示请求进入队列，不代表设备已写完。
+
+部分成功时，只能清除已确认成功的范围，其余页必须保持 dirty。
+
+失败时，page cache 中的数据仍是最新版本。dirty 状态保留意味着后续还有机会重试 flush。如果错误路径清除了 dirty，文件系统会误以为数据已落盘。
+
+## counter
+
+page cache 侧：
+
+```text
+cached.async_dirty_flush_hits           — flush consumer 触发次数
+cached.async_dirty_flush_pages          — 参与 flush 的页数
+cached.async_dirty_flush_bytes          — flush 字节数
+cached.async_dirty_flush_sg_hits        — 走到 SG 零拷贝路径的次数
+cached.async_dirty_flush_sg_segments    — SG segment 总数
+cached.async_dirty_flush_bounce_fallbacks — fallback 到 owned buffer 的次数
+cached.async_dirty_flush_errors         — flush 错误（必须为 0）
+```
+
+block queue 侧（与 ch4 相同的通用 counter）：
+
+```text
+virtio.blk_async_max_depth              — 实际队列深度峰值
+virtio.blk_async_completion_errors      — 必须为 0
+virtio.blk_async_resource_leaks         — 必须为 0
+```
+
+RV Phase 5B 实测：`sg_hits = 26`，`sg_segments = 1664`，`bounce_fallbacks = 25`，`writeback_restarts = 0`，所有 error counter = 0。
+
+## 与后续 consumer 的关系
+
+dirty run flush 作为第一个 consumer 验证了队列契约的完整闭环：
+
+```text
+buffer 必须活到 completion
+状态只能在 completion 成功后发布
+失败时必须保留可恢复状态
+```
+
+后续的 user direct I/O 和 lwext4 read path 复用同一套规则，不再各自发明私有异步路径。[ch6](#/labs/thekernel-io-boost/ch6) 和 [ch7](#/labs/thekernel-io-boost/ch7) 分别介绍这两个更高风险的 consumer。

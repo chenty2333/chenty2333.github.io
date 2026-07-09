@@ -1,187 +1,217 @@
-# page cache dirty run flush
+# async/batch block queue
 
-page cache dirty run flush 是第一个接入 async/batch block queue 的 consumer。选择它作为第一个 consumer 的原因：**dirty page 由内核管理，生命周期比用户页简单得多**，同时它会真实经过文件系统和块设备的写入路径，能检验队列契约是否正确。
+本章介绍 TheKernel 块设备层的核心改造：从 submit one, wait one 的同步路径，变为支持多请求并发、异步完成的队列。
 
-## dirty page 从哪来
+这个队列是后续所有 consumer（dirty flush、user direct I/O、lwext4 read path）的公共基础设施。它的设计围绕四个问题展开：
 
-用户调用 `write(fd, buf, len)` 时，数据通常不会立刻落盘。内核先将用户数据写入 **page cache** 中对应的文件页，然后把该页标记为 **dirty**（已修改但尚未写回磁盘）。
+1. 请求对象放在哪、活多久？（**owned request**）
+2. 一次能提交多少？（**descriptor budget admission**）
+3. 完成后谁来收割？（**completion drain**）
+4. 等待时怎么等？（**hybrid wait / IRQ-first**）
 
-```text
-write(fd, buf, len)
-  -> CachedFile::write_at
-  -> 找到或创建 page cache page
-  -> copy 用户数据到 cache page
-  -> page.dirty = true
-  -> 返回用户态
-```
+## 为什么同步路径不够
 
-后续在 `fsync`、文件关闭、缓存压力、显式 flush 等时机，dirty page 才被写回文件系统和块设备。
-
-iozone 的 write / rewrite / random write / pwrite / pwritev 都会不断制造 dirty page。1KB record 下写入次数极多，page cache 中同一批页面反复被写脏。写入本身只是前半段；后半段是 dirty page **怎么刷回去**。
-
-## 逐页 flush 的问题
-
-最直接的 flush 方式——逐页写回：
+旧的 VirtIO 块设备接口：
 
 ```text
-dirty page 0 -> write_at(offset=0, 4096)    -> block submit -> wait
-dirty page 1 -> write_at(offset=4096, 4096)  -> block submit -> wait
-dirty page 2 -> write_at(offset=8192, 4096)  -> block submit -> wait
-dirty page 3 -> write_at(offset=12288, 4096) -> block submit -> wait
+fn read_block(block_id, buf)  -> 提交 -> 忙等 -> 返回
+fn write_block(block_id, buf) -> 提交 -> 忙等 -> 返回
 ```
 
-语义正确，但性能差。这些页在文件偏移上连续，底层磁盘 block 很可能也连续，逐页 flush 却把它们拆成多个独立的 4KB 小请求，每个都要走一次文件系统映射、块设备提交、completion 等待。
+调用者每次只允许一个请求在设备中。即使 VirtIO virtqueue 本身能容纳多个 descriptor，上层的 submit-then-busy-wait 模型把队列深度压死在 1。
 
-**dirty run flush** 的做法：先识别连续 dirty page 组成的 **run**（连续区间），再按 run 为单位提交。
+旧路径中，请求的元数据（`BlkReq`、`BlkResp`、`done` flag）放在调用者的**栈**上。同步路径里这没有问题——函数不返回，栈变量一直活着。但如果要支持 batch submit（一次提交多个请求后再统一等待），函数可能在请求完成之前就要返回或去做别的事，栈变量此时已经失效。
 
-```text
-dirty page 0..3 (连续)
-  -> 合并为一次 write_at(offset=0, 16384)
-  -> block batch submit
-```
+## Phase 0–1：guardrail 与 capability API
 
-## Phase 5A：owned buffer 语义验证
+改动从两条规则开始：
 
-第一版 dirty run flush 没有直接把 page cache page 交给块设备，而是先将 dirty run **拷贝到内核拥有的 writeback buffer** 中。
+1. **Kill switch 先于功能**。在 `/proc/io_stats` 中加入 `async_block_on` / `async_block_off` 控制字，以及一组初始值为 0 的 counter。任何新路径默认关闭，出问题时一条 `echo async_block_off > /proc/io_stats` 即可回退到同步路径。
+2. **Capability 而非 mandatory trait**。在 `axdriver_block` 中新增可选的 `AsyncBlockQueueOps` trait（含 `queue_caps`、`submit_batch`、`poll_complete`、`wait_all`、`fence`），`BlockDriverOps` 保持不变。不支持异步的设备返回 unsupported，调用方 fallback 到同步 `write_at` / `read_at`。
 
-流程：
-
-```text
-拿 page-cache lock
-  -> 扫描连续 dirty page
-  -> 拷贝数据到 owned writeback buffer（16-page / 64KiB segments）
-  -> 记录 page number / offset / len
-释放 page-cache lock
-  -> file.write_at_vectored(...)   [通过 async batch queue]
-  -> wait all completions
-重新检查 page 状态
-  -> completion 成功 -> 清 dirty
-  -> completion 失败 -> 保留 dirty
-```
-
-这一步仍有一次 copy，但它解决了两个关键问题：
-
-**锁的持有时间**：块设备 I/O 需要等待 completion，等待期间不能持有 page-cache map lock，否则其他读写、缓存回收、truncate 全部被阻塞。Phase 5A 在锁内只收集数据和元信息，提交 I/O 前释放锁。
-
-**buffer 生命周期**：owned buffer 由 flush 路径自己持有，提交给块设备后不会被 page cache 回收，也不会被并发写入修改。设备完成前 buffer 始终有效。
-
-> **Phase 5A 的定位**
+> **ADR 0009**
 >
-> 它是一个**语义验证阶段**，暂时保留 copy，先证明：
-> - 连续 dirty page 能形成 run
-> - run 可以进入 vectored write
-> - async block queue 能接住这些请求
-> - dirty 标记只在 completion 成功后清除
-> - completion 失败时 dirty 状态保留
->
-> 这一层不稳的话，直接做零拷贝只会让 bug 更难查。
+> 异步能力作为可选 capability 暴露，而非强制所有驱动重写。运行时 fallback 必须在任何 async 路径 default-on 之前存在。
 
-实测 counter：`cached.async_dirty_flush_hits = 51`，`async_dirty_flush_pages = 1689`，`async_dirty_flush_bytes ≈ 6.86 MB`，`virtio.blk_async_max_depth = 4`。
+## Phase 2：owned request pool（depth 1）
 
-## Phase 5B：page-cache SG 零拷贝
+将栈上的 `PendingBlkRequest`（含裸指针指向调用者栈上的 `BlkReq`/`BlkResp`/`done`）替换为**队列拥有的 request slot**。
 
-Phase 5B 去掉 copy，把 page cache page 直接作为块设备请求的 data segment 提交。
-
-**SG**（scatter-gather）指多个不连续的内存段作为一组 segment 提交给设备。page cache 中的连续文件页在物理内存上不一定连续，但可以用多个 segment 描述。
-
-流程：
+每个 slot 包含：
 
 ```text
-扫描连续 dirty page（>= 2 页、完整页、无 evict listener、未处于 writeback）
-  -> pin pages（阻止 LRU 逐出）
-  -> mark writeback
-  -> 构建 SG segments
-  -> async vectored write（通过 block queue）
-  -> completion
-  -> clear dirty / clear writeback / unpin
+BlkReq          — 设备请求头
+BlkResp         — 设备响应
+operation       — Read / Write / Flush
+sector + len    — 扇区范围
+segment metadata
+completion state — Free / Prepared / Submitted / Completing / Done / Failed
+token           — VirtIO used ring 中的标识
+resource guard  — 持有 buffer / page pin / user pin 的 guard
 ```
 
-### writeback 状态的作用
+request pool 大小固定（等于 VirtQueue size），不做热路径动态分配。提交时分配 slot、安装 token metadata；completion drain 时通过 token 找回 slot、读取 response、更新状态、释放 guard。
 
-一个 page 正在写回（writeback）时，如果并发写入直接覆盖然后 flush 路径清掉 dirty，会丢失数据：
+> **ADR 0005**
+>
+> 队列拥有请求对象。设备能访问的 request header、response、buffer 描述，都不能在 completion 前失效。debug build 中 drop 一个 live slot 会 panic。
 
-| 时间 | 事件 | 结果 |
+Phase 2 保持 depth = 1，只做生命周期重写，不引入 batch。这样它可以独立于后续的批量提交逻辑进行验证——counter `virtio.blk_pending_max_depth = 1` + `resource_leaks = 0` 即为通过条件。
+
+## Phase 3：descriptor-aware batch submit
+
+### descriptor 成本
+
+一个 VirtIO 块请求消耗的 descriptor 数量不固定：
+
+```text
+普通单 buffer 请求:  header(1) + data(1) + response(1) = 3
+SG 多 segment 请求:  header(1) + segment_0 + segment_1 + ... + response(1) = 2 + N
+```
+
+因此 admission（准入控制）不能按「请求个数」限制，必须按 **descriptor budget**（描述符预算）限制。
+
+### 提交流程
+
+```text
+1. drain 已完成请求（opportunistic completion drain）
+2. 计算下一个 request 的 descriptor cost
+3. 如果 slot 和 descriptor 都够 → add_unpublished（构建 descriptor chain 但不发布到 avail ring）
+4. 安装 token metadata（在 publish 之前，防止 fast device 在 publish 瞬间完成时找不到对应 slot）
+5. 对所有已 add 的请求统一 publish（更新 avail ring）
+6. notify 设备（至多一次）
+```
+
+如果一批请求只能放下前缀，则提交前缀，剩余部分等 completion drain 后重试。计数器 `virtio.blk_async_admission_stalls` 记录这种情况。
+
+### 架构差异
+
+| | RISC-V | LoongArch64 |
 |---|---|---|
-| t1 | flush 提交 page 内容 A | 设备开始写 A |
-| t2 | 并发 write 将 page 改为 B | 内存中是 B |
-| t3 | flush completion 成功 | dirty 被清除 |
-| t4 | — | 内存中是 B，磁盘上是 A，dirty = false → B 丢失 |
+| 默认深度 | 4 | 1（保守） |
+| indirect descriptor | 可用 | 不假设可用 |
+| event-idx | 可用 | 不假设可用 |
+| descriptor budget | 16 | 16（direct split-ring 更贵） |
 
-解决方式：正在 writeback 的 page 被标识出来，并发写入需要等待 writeback 结束或在 writeback 后重新标记 dirty。
-
-### SG4 chunk 限制
-
-Phase 5B 最初将整个 dirty run 映射为一个大 SG 请求（all-segments）。在 RV QEMU 下产生了 queue-full、admission stall 和 `cached.async_dirty_flush_errors`。
-
-接受的形态是 **SG4**：每个 async request 最多携带 4 个 data segment。请求数从 320（每页一个请求）→ 160（SG2）→ **80**（SG4）。
-
-> **为什么不用 indirect descriptor**
+> **ADR 0002**
 >
-> indirect descriptor 可以让一个请求携带任意多 segment 而只消耗 1 个 virtqueue descriptor。但 indirect 的 DMA 行为和 descriptor accounting 在 LoongArch64 上尚未充分验证。SG4 保守但 descriptor 可控，作为第一个默认接受的形态。indirect / larger SG 留待 descriptor accounting 验证后再开启。
+> RISC-V 是第一个性能目标；LoongArch64 是正确性目标——编译同一套代码、通过 smoke 和 replay，但默认保守深度，直到有正面性能证据。
 
-### fallback 条件
+## Phase 4：completion drain 与 hybrid wait
 
-以下情况退回 Phase 5A owned buffer 路径（计数器 `cached.async_dirty_flush_bounce_fallbacks`）：
+### completion drain
 
-- dirty run 包含非完整页
-- EOF 附近出现零长度或部分页
-- page 带有 mmap listener（尚无完整的写保护协议）
-- page 已经处于 writeback
-- segment 数量超过块设备 descriptor budget
-- LoongArch64 需要更保守的 descriptor 深度
-
-## dirty 标记的清除时机
-
-dirty flush 最容易出错的地方是**何时清除 dirty 标记**。
-
-正确顺序：
+设备完成请求后将 used descriptor 放回 virtqueue。内核侧的 drain 流程：
 
 ```text
-submit write
-  -> wait completion
-  -> device 报告 success
-  -> re-check page 状态
-  -> clear dirty / clear writeback
+pop used token
+  -> 通过 token 找到 owned request slot
+  -> 读取 BlkResp
+  -> 标记 Done 或 Failed
+  -> 更新 counter
+  -> 唤醒等待者
+  -> 释放 resource guard（page pin / user pin / owned buffer）
 ```
 
-不能在 submit 时清 dirty。submit 只表示请求进入队列，不代表设备已写完。
+drain 不由专门的 background worker 执行，而是从 **submit、wait、queue-full、interrupt** 四个入口 opportunistically 触发。
 
-部分成功时，只能清除已确认成功的范围，其余页必须保持 dirty。
+> **ADR 0007**
+>
+> 不引入常驻 completion worker。一个 background worker 会把忙轮询成本隐藏到另一个任务中，在 core queue contract 验证前不引入额外复杂性。
 
-失败时，page cache 中的数据仍是最新版本。dirty 状态保留意味着后续还有机会重试 flush。如果错误路径清除了 dirty，文件系统会误以为数据已落盘。
+### hybrid wait
 
-## counter
-
-page cache 侧：
+等待某个请求完成时的步骤：
 
 ```text
-cached.async_dirty_flush_hits           — flush consumer 触发次数
-cached.async_dirty_flush_pages          — 参与 flush 的页数
-cached.async_dirty_flush_bytes          — flush 字节数
-cached.async_dirty_flush_sg_hits        — 走到 SG 零拷贝路径的次数
-cached.async_dirty_flush_sg_segments    — SG segment 总数
-cached.async_dirty_flush_bounce_fallbacks — fallback 到 owned buffer 的次数
-cached.async_dirty_flush_errors         — flush 错误（必须为 0）
+1. drain completions
+2. 目标请求已完成？ -> 返回
+3. 短暂 spin（继续 drain）
+4. spin 超时仍未完成 -> 检查 can_block_current()
+   4a. 可以 block -> 注册 WaitQueue waiter -> 再次检查（防 lost wakeup）-> sleep
+   4b. 不可以 block -> bounded yield/spin -> 记录 fallback
+5. 被 IRQ drain 或超时唤醒后回到步骤 1
 ```
 
-block queue 侧（与 ch3 相同的通用 counter）：
+> **为什么需要 `can_block_current()`**
+>
+> 部分 I/O 路径进入块设备等待时仍持有 preemption guard（例如 lwext4 的 `SpinNoPreempt` 文件系统锁）。在这种上下文中调用 `WaitQueue::wait_timeout_until` 会触发调度断言：`assertion failed: curr.can_preempt(2)`。因此 wait path 必须先判断当前上下文能否安全睡眠。
+
+相关 counter：
 
 ```text
-virtio.blk_async_max_depth              — 实际队列深度峰值
-virtio.blk_async_completion_errors      — 必须为 0
-virtio.blk_async_resource_leaks         — 必须为 0
+virtio.blk_async_wait_spins
+virtio.blk_async_wait_spin_hits
+virtio.blk_async_wait_yields
+virtio.blk_async_wait_sleeps
+virtio.blk_async_wait_wakeups
+virtio.blk_async_wait_timeouts
 ```
 
-RV Phase 5B 实测：`sg_hits = 26`，`sg_segments = 1664`，`bounce_fallbacks = 25`，`writeback_restarts = 0`，所有 error counter = 0。
+这组 counter 的存在是为了证明一件事：**wait-poll CPU 成本没有从同步忙轮询简单移动到另一个无界 spin loop 中**。如果 `wait_sleeps` 和 `wait_wakeups` 为 0 而 `wait_spins` 很高，说明 hybrid wait 退化成了纯 spin，需要排查原因。
 
-## 与后续 consumer 的关系
+### IRQ-first（可选）
 
-dirty run flush 作为第一个 consumer 验证了队列契约的完整闭环：
+在 hybrid wait 基础上进一步：提交请求后如果平台中断可用，直接注册 waiter 然后 sleep，由设备中断触发 drain + wakeup。不依赖超时。
+
+启用条件：
+
+- block driver 注册了 IRQ handler
+- handler 能 ack 中断并安全 drain
+- 当前上下文 `can_block_current() == true`
+
+当前默认策略保持 `async_block_wait=hybrid`。`irq_first` 作为显式 wait policy，通过 `/proc/io_stats` 切换，不默认开启——因为真实 filesystem consumer 的部分 wait 路径仍处于 cannot-block 上下文。
+
+## barrier 与 flush 语义
+
+异步写入不能打乱文件系统语义。需要区分两种边界：
+
+| 操作 | 语义 |
+|---|---|
+| `fence_async()` | 等待已提交的 async data write 完成（数据到设备，但不保证持久化） |
+| `flush()` | fence + 向设备提交 VirtIO FLUSH 请求（要求持久化到介质） |
+
+普通 dirty data write 可以在同一 batch 内并发提交。但以下路径必须先 fence 再继续：
+
+- `fsync` / `fdatasync` / `sync`
+- close flush
+- `truncate` / `unlink`
+- metadata update
+- journal-sensitive path
+
+> **ADR 0008**
+>
+> 如果一条路径不能证明自己是「普通 dirty data writeback」，它就必须走同步路径。dirty page 的 dirty 标记只能在 completion **成功后**清除，不能在 submit 时清除。
+
+## 回滚开关
+
+所有行为通过 `/proc/io_stats` 运行时控制：
 
 ```text
-buffer 必须活到 completion
-状态只能在 completion 成功后发布
-失败时必须保留可恢复状态
+async_block_on / async_block_off
+async_block_depth=N
+async_block_la_depth=N
+async_block_wait=hybrid | sync | irq_first
+async_dirty_flush_sg_on / async_dirty_flush_sg_off
+async_block_adaptive_on / async_block_adaptive_off
+async_block_merge_write_on / async_block_merge_write_off
 ```
 
-后续的 user direct I/O 和 lwext4 read path 复用同一套规则，不再各自发明私有异步路径。下一章介绍这两个更高风险的 consumer。
+每个 consumer 有独立开关。关闭某个 advanced feature 不影响已验证的 base queue——例如关闭 merge 后 SG4 固定 4-segment async write 仍然工作。
+
+## 验证标准
+
+核心 counter：
+
+```text
+virtio.blk_async_max_depth          >= 2   （真实队列深度）
+virtio.blk_async_submit_batches     > 0    （batch 确实发生）
+virtio.blk_async_completion_errors  = 0    （不可妥协）
+virtio.blk_async_resource_leaks     = 0    （不可妥协）
+```
+
+`max_depth >= 2` 证明多个请求同时在队列中。`completion_errors` 和 `resource_leaks` 为 0 是硬性不可妥协条件——性能调优可以慢慢做，生命周期错误不能有。
+
+RV smoke 实测 `max_depth = 4`；LA smoke 达到 `max_depth = 2`，但因性能未见提升而保持默认 depth = 1。
+
+下一章介绍第一个接入这套队列的 consumer：page cache dirty run flush。
